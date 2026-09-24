@@ -5,70 +5,27 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NullFuscator — Lua Obfuscator</title>
 <style>
-  :root {
-    --bg:#0a0a0a; --panel:#111; --panel-2:#161616; --border:#262626;
-    --border-hi:#3a3a3a; --text:#e5e5e5; --muted:#8a8a8a; --dim:#5a5a5a;
-    --shadow:0 1px 0 rgba(255,255,255,.03),0 8px 24px rgba(0,0,0,.4);
-  }
-  *{box-sizing:border-box}
-  html,body{margin:0;padding:0}
-  body{
-    background:var(--bg);color:var(--text);min-height:100vh;
-    font-family:'JetBrains Mono','Fira Code',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-    background-image:
-      radial-gradient(circle at 20% 0%,rgba(255,255,255,.04),transparent 40%),
-      radial-gradient(circle at 80% 100%,rgba(255,255,255,.03),transparent 40%);
-    display:flex;align-items:flex-start;justify-content:center;
-    padding:48px 20px 64px;
-  }
+  :root{--bg:#0a0a0a;--panel:#111;--panel-2:#161616;--border:#262626;--border-hi:#3a3a3a;--text:#e5e5e5;--muted:#8a8a8a;--dim:#5a5a5a;--shadow:0 1px 0 rgba(255,255,255,.03),0 8px 24px rgba(0,0,0,.4)}
+  *{box-sizing:border-box}html,body{margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);min-height:100vh;font-family:'JetBrains Mono','Fira Code',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background-image:radial-gradient(circle at 20% 0%,rgba(255,255,255,.04),transparent 40%),radial-gradient(circle at 80% 100%,rgba(255,255,255,.03),transparent 40%);display:flex;align-items:flex-start;justify-content:center;padding:48px 20px 64px}
   .app{width:100%;max-width:900px;animation:rise .6s cubic-bezier(.2,.7,.2,1) both}
   @keyframes rise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
   header{text-align:center;margin-bottom:36px}
-  h1{
-    font-size:clamp(28px,5vw,44px);font-weight:700;letter-spacing:-.03em;margin:0 0 8px;
-    background:linear-gradient(180deg,#fff 0%,#9a9a9a 100%);
-    -webkit-background-clip:text;background-clip:text;color:transparent;
-  }
+  h1{font-size:clamp(28px,5vw,44px);font-weight:700;letter-spacing:-.03em;margin:0 0 8px;background:linear-gradient(180deg,#fff 0%,#9a9a9a 100%);-webkit-background-clip:text;background-clip:text;color:transparent}
   .subtitle{margin:0;color:var(--muted);font-size:13px;letter-spacing:.14em;text-transform:uppercase}
-  .subtitle .dot{
-    display:inline-block;width:6px;height:6px;border-radius:50%;background:#4ade80;
-    margin-right:8px;vertical-align:middle;box-shadow:0 0 8px #4ade80;
-    animation:pulse 2s ease-in-out infinite;
-  }
+  .subtitle .dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#4ade80;margin-right:8px;vertical-align:middle;box-shadow:0 0 8px #4ade80;animation:pulse 2s ease-in-out infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-  .panel{
-    background:var(--panel);border:1px solid var(--border);border-radius:12px;
-    overflow:hidden;box-shadow:var(--shadow);
-    transition:border-color .25s ease,box-shadow .25s ease;
-  }
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:var(--shadow);transition:border-color .25s ease,box-shadow .25s ease}
   .panel:focus-within{border-color:var(--border-hi);box-shadow:var(--shadow),0 0 0 4px rgba(255,255,255,.04)}
-  .panel-header{
-    display:flex;justify-content:space-between;align-items:center;
-    padding:10px 14px;background:var(--panel-2);border-bottom:1px solid var(--border);
-    font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
-  }
+  .panel-header{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--panel-2);border-bottom:1px solid var(--border);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
   .panel-header .count{font-variant-numeric:tabular-nums;color:var(--dim)}
-  textarea{
-    width:100%;min-height:220px;background:transparent;border:none;outline:none;
-    resize:vertical;color:var(--text);padding:16px;font-family:inherit;
-    font-size:13px;line-height:1.6;tab-size:2;
-  }
+  textarea{width:100%;min-height:220px;background:transparent;border:none;outline:none;resize:vertical;color:var(--text);padding:16px;font-family:inherit;font-size:13px;line-height:1.6;tab-size:2}
   textarea::placeholder{color:var(--dim)}
-  .output{
-    margin:0;padding:16px;min-height:120px;max-height:420px;overflow:auto;
-    font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all;
-    color:#c8c8c8;transition:opacity .3s ease;
-  }
+  .output{margin:0;padding:16px;min-height:120px;max-height:420px;overflow:auto;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all;color:#c8c8c8;transition:opacity .3s ease}
   .output .placeholder{color:var(--dim);font-style:italic}
   .output.error{color:#ff7b72}
   .actions{display:flex;gap:10px;margin:20px 0;flex-wrap:wrap}
-  .btn{
-    appearance:none;border:1px solid var(--border-hi);background:var(--panel-2);
-    color:var(--text);padding:12px 22px;border-radius:8px;font-family:inherit;
-    font-size:13px;letter-spacing:.05em;cursor:pointer;
-    transition:transform .15s cubic-bezier(.2,.7,.2,1),background .2s,border-color .2s,box-shadow .2s;
-    position:relative;overflow:hidden;
-  }
+  .btn{appearance:none;border:1px solid var(--border-hi);background:var(--panel-2);color:var(--text);padding:12px 22px;border-radius:8px;font-family:inherit;font-size:13px;letter-spacing:.05em;cursor:pointer;transition:transform .15s cubic-bezier(.2,.7,.2,1),background .2s,border-color .2s,box-shadow .2s;position:relative;overflow:hidden}
   .btn:hover{background:#1d1d1d;border-color:#4a4a4a;transform:translateY(-1px)}
   .btn:active{transform:translateY(0)}
   .btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
@@ -76,11 +33,7 @@
   .btn.primary:hover{background:#fff;box-shadow:0 6px 24px rgba(255,255,255,.15)}
   .btn.ghost{background:transparent;border-color:var(--border);color:var(--muted)}
   .btn.ghost:hover{color:var(--text);border-color:var(--border-hi);background:rgba(255,255,255,.02)}
-  .btn .spinner{
-    display:inline-block;width:12px;height:12px;border:2px solid currentColor;
-    border-top-color:transparent;border-radius:50%;margin-right:8px;
-    vertical-align:-1px;animation:spin .7s linear infinite;
-  }
+  .btn .spinner{display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;margin-right:8px;vertical-align:-1px;animation:spin .7s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
   footer{text-align:center;color:var(--dim);font-size:11px;margin-top:32px;letter-spacing:.1em}
   footer b{color:var(--muted);font-weight:500}
@@ -92,13 +45,10 @@
 <div class="app">
   <header>
     <h1>NullFuscator</h1>
-    <p class="subtitle"><span class="dot"></span>Lua Obfuscation Engine</p>
+    <p class="subtitle"><span class="dot"></span>Lua Obfuscation Engine · Anti-Tamper</p>
   </header>
   <section class="panel">
-    <div class="panel-header">
-      <span>Input · Lua</span>
-      <span class="count" id="inCount">0 B</span>
-    </div>
+    <div class="panel-header"><span>Input · Lua</span><span class="count" id="inCount">0 B</span></div>
     <textarea id="input" spellcheck="false" placeholder="-- paste your Lua source here&#10;local greet = function(name)&#10;  print('Hello, ' .. name .. '!')&#10;end&#10;greet('world')"></textarea>
   </section>
   <div class="actions">
@@ -107,13 +57,10 @@
     <button id="clearBtn" class="btn ghost">Clear</button>
   </div>
   <section class="panel">
-    <div class="panel-header">
-      <span>Output · Obfuscated</span>
-      <span class="count" id="outCount">0 B</span>
-    </div>
+    <div class="panel-header"><span>Output · Obfuscated</span><span class="count" id="outCount">0 B</span></div>
     <pre class="output" id="output"><span class="placeholder">Obfuscated code will appear here…</span></pre>
   </section>
-  <footer><b>NullFuscator</b> · client-side only · your code never leaves the browser</footer>
+  <footer><b>NullFuscator</b> · client-side only · anti-tamper enabled</footer>
 </div>
 <script>
 const KEYWORDS=new Set(['and','break','do','else','elseif','end','false','for','function','goto','if','in','local','nil','not','or','repeat','return','then','true','until','while']);
@@ -260,102 +207,203 @@ function buildHeader(bxName,dName){
          'local function '+dName+'(s,k)local t={}for i=1,#s do t[i]=string.char('+bxName+'(string.byte(s,i),k))end return table.concat(t)end\n';
 }
 
-function obfuscateLua(src){
-  let tokens=tokenize(src).filter(t=>t.type!=='ws'&&t.type!=='comment');
-  const locals=collectLocals(tokens);
-  const usedNames=new Set();
-  for(const t of tokens)if(t.type==='name')usedNames.add(t.value);
-  function freshName(){let n;do{n='_'+Math.random().toString(36).slice(2,8);}while(usedNames.has(n)||KEYWORDS.has(n));usedNames.add(n);return n;}
-  const bxName=freshName(),dName=freshName();
-  const renameMap=new Map();
-  for(const name of locals){
-    if(GLOBALS.has(name))continue;
-    if(name===bxName||name===dName)continue;
-    renameMap.set(name,freshName());
-  }
-  let braceDepth=0;
-  const out=[];
+/* ============ ANTI-TAMPER WRAPPER ============ */
+function buildAntiTamper(tamperFlagName, debugHookName, lineCheckName){
+  const lines = [];
+  lines.push('-- NullFuscator Anti-Tamper Layer');
+  lines.push('local '+tamperFlagName+'=true');
+  lines.push('local '+debugHookName+'=debug and debug.sethook or function()end');
+  lines.push('local '+lineCheckName+'=0');
+  lines.push('local function _tc()'+lineCheckName+'='+lineCheckName+'+1 end');
+  lines.push('if debug and debug.sethook then');
+  lines.push('  local _ok,_err=pcall(function()');
+  lines.push('    debug.sethook(_tc,"l")');
+  lines.push('    _tc() _tc()');
+  lines.push('    debug.sethook()');
+  lines.push('  end)');
+  lines.push('  if not _ok or '+lineCheckName+'<2 then '+tamperFlagName+'=false end');
+  lines.push('else');
+  lines.push('  '+tamperFlagName+'=false');
+  lines.push('end');
+  lines.push('-- Function integrity checks');
+  lines.push('do');
+  lines.push('  local _checks={pcall,string.char,debug.getinfo,string.dump}');
+  lines.push('  for _,_f in ipairs(_checks) do');
+  lines.push('    local _i=debug.getinfo(_f)');
+  lines.push('    if _i and _i.what~="C" then '+tamperFlagName+'=false end');
+  lines.push('    if debug.getupvalue and debug.getupvalue(_f,1) then '+tamperFlagName+'=false end');
+  lines.push('    local _d=pcall(string.dump,_f)');
+  lines.push('    if _d then '+tamperFlagName+'=false end');
+  lines.push('  end');
+  lines.push('end');
+  lines.push('-- Line consistency check');
+  lines.push('if debug and debug.getinfo then');
+  lines.push('  local _ok=pcall(function()');
+  lines.push('    local _info=debug.getinfo(1,"l")');
+  lines.push('    if not _info or not _info.currentline or _info.currentline<0 then '+tamperFlagName+'=false end');
+  lines.push('  end)');
+  lines.push('  if not _ok then '+tamperFlagName+'=false end');
+  lines.push('end');
+  lines.push('if not '+tamperFlagName+' then while true do end end');
+  lines.push('');
+  return lines.join('\n');
+}
+
+/* ============ DEAD CODE INJECTION ============ */
+function generateDeadBlock(rng){
+  const templates = [
+    `do local _a,_b=0,1 for _i=1,math.random(5,20) do _a=_a+_b*_i _b=_b xor _a end if _a>999999 then return end end`,
+    `do local _t={} for _i=1,math.random(8,25) do _t[_i]=(_i*7)%13 end if #_t>100 then return end end`,
+    `do local _x=0 while _x<math.random(10,30) do _x=_x+1 if _x%5==0 then _x=_x+1 end end end`,
+    `do local _s="" for _i=1,math.random(3,8) do _s=_s..string.char(math.random(65,90)) end if #_s>20 then return end end`,
+    `do local _n=os.time()%1000 for _i=1,10 do _n=(_n*31+17)%10007 end if _n==0 then return end end`,
+    `do local _f=function(a,b)return a~=b end local _r=false for _i=1,math.random(5,15) do _r=_f(_i,_i+1) end if _r then return end end`,
+    `do local _p={1,2,3,4,5} local _q=0 for _,_v in ipairs(_p) do _q=_q+_v*_v end if _q>1000 then return end end`,
+  ];
+  return templates[Math.floor(rng()*templates.length)];
+}
+
+function injectDeadCode(tokens, rng){
+  const result = [];
+  const deadBlocks = [];
+  let depth = 0;
   for(let i=0;i<tokens.length;i++){
-    const t=tokens[i];
-    if(t.type==='op'){
-      if(t.value==='{')braceDepth++;
-      else if(t.value==='}')braceDepth--;
-      out.push(t);continue;
+    const t = tokens[i];
+    if(t.type==='keyword' && (t.value==='function'||t.value==='if'||t.value==='for'||t.value==='while'||t.value==='do')) depth++;
+    if(t.type==='keyword' && t.value==='end') depth = Math.max(0, depth-1);
+    result.push(t);
+    // Inject dead blocks at safe points (after statements, depth > 0)
+    if(depth > 0 && t.type==='op' && (t.value===';'||t.value===',')){
+      if(rng() < 0.4){
+        deadBlocks.push({index: result.length, code: generateDeadBlock(rng)});
+      }
     }
-    if(t.type==='string'){out.push({type:'raw',value:encodeString(parseLuaString(t.value),dName)});continue;}
-    if(t.type==='number'){out.push({type:'raw',value:encodeNumber(t.value),numeric:true});continue;}
+  }
+  // Insert dead blocks from the end so indices stay valid
+  for(let i=deadBlocks.length-1;i>=0;i--){
+    const db = deadBlocks[i];
+    result.splice(db.index, 0, {type:'raw', value: db.code + ' '});
+  }
+  return result;
+}
+
+/* ============ MAIN OBFUSCATION ============ */
+function obfuscateLua(src, opts){
+  opts = opts || {};
+  const seed = opts.seed || Date.now();
+  let _s = seed;
+  const rng = function(){ _s = (_s * 1103515245 + 12345) & 0x7fffffff; return _s / 0x7fffffff; };
+
+  let tokens = tokenize(src).filter(t => t.type!=='ws' && t.type!=='comment');
+  const locals = collectLocals(tokens);
+  const usedNames = new Set();
+  for(const t of tokens) if(t.type==='name') usedNames.add(t.value);
+  function freshName(){ let n; do{ n='_'+Math.random().toString(36).slice(2,8); } while(usedNames.has(n)||KEYWORDS.has(n)); usedNames.add(n); return n; }
+
+  const bxName = freshName();
+  const dName = freshName();
+  const tamperFlag = freshName();
+  const debugHook = freshName();
+  const lineCheck = freshName();
+
+  const renameMap = new Map();
+  for(const name of locals){
+    if(GLOBALS.has(name)) continue;
+    if(name===bxName||name===dName||name===tamperFlag) continue;
+    renameMap.set(name, freshName());
+  }
+
+  let braceDepth = 0;
+  const out = [];
+  for(let i=0;i<tokens.length;i++){
+    const t = tokens[i];
+    if(t.type==='op'){ if(t.value==='{') braceDepth++; else if(t.value==='}') braceDepth--; out.push(t); continue; }
+    if(t.type==='string'){ out.push({type:'raw', value: encodeString(parseLuaString(t.value), dName)}); continue; }
+    if(t.type==='number'){ out.push({type:'raw', value: encodeNumber(t.value), numeric:true}); continue; }
     if(t.type==='name'){
-      const prev=out.length?out[out.length-1]:null;
-      if(prev&&prev.type==='op'&&(prev.value==='.'||prev.value===':'||prev.value==='::')){out.push(t);continue;}
-      if(prev&&prev.type==='keyword'&&prev.value==='goto'){out.push(t);continue;}
-      const nx0=tokens[i+1];
-      if(nx0&&nx0.type==='op'&&nx0.value==='::'){out.push(t);continue;}
-      if(braceDepth>0&&nx0&&nx0.type==='op'&&nx0.value==='='){out.push(t);continue;}
-      if(renameMap.has(t.value))out.push({type:'raw',value:renameMap.get(t.value)});
+      const prev = out.length ? out[out.length-1] : null;
+      if(prev && prev.type==='op' && (prev.value==='.'||prev.value===':'||prev.value==='::')){ out.push(t); continue; }
+      if(prev && prev.type==='keyword' && prev.value==='goto'){ out.push(t); continue; }
+      const nx0 = tokens[i+1];
+      if(nx0 && nx0.type==='op' && nx0.value==='::'){ out.push(t); continue; }
+      if(braceDepth>0 && nx0 && nx0.type==='op' && nx0.value==='='){ out.push(t); continue; }
+      if(renameMap.has(t.value)) out.push({type:'raw', value: renameMap.get(t.value)});
       else out.push(t);
       continue;
     }
     out.push(t);
   }
-  const body=generate(out);
-  return buildHeader(bxName,dName)+body;
+
+  // Inject dead code if enabled
+  let finalTokens = out;
+  if(opts.deadCode !== false){
+    finalTokens = injectDeadCode(out, rng);
+  }
+
+  const body = generate(finalTokens);
+  const antiTamper = opts.antiTamper !== false ? buildAntiTamper(tamperFlag, debugHook, lineCheck) : '';
+  const header = buildHeader(bxName, dName);
+  return header + antiTamper + body;
 }
 
 function generate(tokens){
-  let out='',prev=null;
+  let out = '', prev = null;
   for(const t of tokens){
-    if(prev&&needsSpace(prev,t))out+=' ';
-    out+=t.value;prev=t;
+    if(prev && needsSpace(prev, t)) out += ' ';
+    out += t.value; prev = t;
   }
   return out;
 }
 
-function needsSpace(a,b){
-  const aLast=a.value[a.value.length-1],bFirst=b.value[0];
-  const aWord=/[A-Za-z0-9_]/.test(aLast),bWord=/[A-Za-z0-9_]/.test(bFirst);
-  if(aWord&&bWord)return true;
-  if(a.value==='-'&&bFirst==='-')return true;
-  if(a.value.endsWith('..')&&b.numeric)return true;
-  if(a.numeric&&b.value.startsWith('..'))return true;
-  if(a.value==='['&&(bFirst==='['||bFirst==='='))return true;
+function needsSpace(a, b){
+  const aLast = a.value[a.value.length-1], bFirst = b.value[0];
+  const aWord = /[A-Za-z0-9_]/.test(aLast), bWord = /[A-Za-z0-9_]/.test(bFirst);
+  if(aWord && bWord) return true;
+  if(a.value==='-' && bFirst==='-') return true;
+  if(a.value.endsWith('..') && b.numeric) return true;
+  if(a.numeric && b.value.startsWith('..')) return true;
+  if(a.value==='[' && (bFirst==='['||bFirst==='=')) return true;
   return false;
 }
 
 /* ---- UI ---- */
-const input=document.getElementById('input'),output=document.getElementById('output');
-const obfBtn=document.getElementById('obfBtn'),copyBtn=document.getElementById('copyBtn'),clearBtn=document.getElementById('clearBtn');
-const inCount=document.getElementById('inCount'),outCount=document.getElementById('outCount');
-function bytesLabel(s){const b=new Blob([s]).size;if(b<1024)return b+' B';return (b/1024).toFixed(2)+' KB';}
-input.addEventListener('input',()=>{inCount.textContent=bytesLabel(input.value);});
-obfBtn.addEventListener('click',()=>{
-  const src=input.value;
-  if(!src.trim()){output.classList.add('error');output.textContent='Please paste some Lua code first.';return;}
-  obfBtn.disabled=true;obfBtn.innerHTML='<span class="spinner"></span>Working…';
+const input = document.getElementById('input'), output = document.getElementById('output');
+const obfBtn = document.getElementById('obfBtn'), copyBtn = document.getElementById('copyBtn'), clearBtn = document.getElementById('clearBtn');
+const inCount = document.getElementById('inCount'), outCount = document.getElementById('outCount');
+function bytesLabel(s){ const b = new Blob([s]).size; if(b<1024) return b+' B'; return (b/1024).toFixed(2)+' KB'; }
+input.addEventListener('input', ()=>{ inCount.textContent = bytesLabel(input.value); });
+
+obfBtn.addEventListener('click', ()=>{
+  const src = input.value;
+  if(!src.trim()){ output.classList.add('error'); output.textContent = 'Please paste some Lua code first.'; return; }
+  obfBtn.disabled = true; obfBtn.innerHTML = '<span class="spinner"></span>Working…';
   output.classList.remove('error');
   setTimeout(()=>{
     try{
-      const result=obfuscateLua(src);
-      output.textContent=result;
-      outCount.textContent=bytesLabel(result);
-      copyBtn.disabled=false;
-      output.classList.remove('flash');void output.offsetWidth;output.classList.add('flash');
-    }catch(e){
+      const result = obfuscateLua(src, { antiTamper:true, deadCode:true });
+      output.textContent = result;
+      outCount.textContent = bytesLabel(result);
+      copyBtn.disabled = false;
+      output.classList.remove('flash'); void output.offsetWidth; output.classList.add('flash');
+    } catch(e){
       output.classList.add('error');
-      output.textContent='Error: '+e.message;
-      outCount.textContent='—';copyBtn.disabled=true;
-    }finally{
-      obfBtn.disabled=false;obfBtn.textContent='Obfuscate';
+      output.textContent = 'Error: ' + e.message;
+      outCount.textContent = '—'; copyBtn.disabled = true;
+    } finally {
+      obfBtn.disabled = false; obfBtn.textContent = 'Obfuscate';
     }
-  },20);
+  }, 20);
 });
-copyBtn.addEventListener('click',async()=>{
-  try{await navigator.clipboard.writeText(output.textContent);copyBtn.textContent='Copied ✓';setTimeout(()=>{copyBtn.textContent='Copy Output';},1400);}
-  catch{copyBtn.textContent='Copy failed';setTimeout(()=>{copyBtn.textContent='Copy Output';},1400);}
+
+copyBtn.addEventListener('click', async()=>{
+  try{ await navigator.clipboard.writeText(output.textContent); copyBtn.textContent = 'Copied ✓'; setTimeout(()=>{ copyBtn.textContent = 'Copy Output'; }, 1400); }
+  catch{ copyBtn.textContent = 'Copy failed'; setTimeout(()=>{ copyBtn.textContent = 'Copy Output'; }, 1400); }
 });
-clearBtn.addEventListener('click',()=>{
-  input.value='';inCount.textContent='0 B';
-  output.innerHTML='<span class="placeholder">Obfuscated code will appear here…</span>';
-  outCount.textContent='0 B';copyBtn.disabled=true;output.classList.remove('error');
+
+clearBtn.addEventListener('click', ()=>{
+  input.value = ''; inCount.textContent = '0 B';
+  output.innerHTML = '<span class="placeholder">Obfuscated code will appear here…</span>';
+  outCount.textContent = '0 B'; copyBtn.disabled = true; output.classList.remove('error');
 });
 </script>
 </body>
