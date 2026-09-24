@@ -349,6 +349,7 @@ function injectDeadCode(tokens,rng,prob){
   return result;
 }
 
+const BANNER="--[[\n█▄░█ █░█ █░░ █░░ █▀ █░█\n█░▀█ █░█ █░░ █░░ █▀ █░█\n▀░░▀ ▀▀▀ ▀▀▀ ▀▀▀ ▀░ ▀▀▀\n▀▀ ▄▀ ▄▀▄ ▀█▀ ▄▀▄ █▀▀▄\n▀▄ █░ █▀█ ░█░ █░█ █▐█▀\n▀░ ░▀ ▀░▀ ░▀░ ░▀░ ▀░▀▀\n█░█ ▄█░\n█░█ ░█░\n░▀░ ▄█▄\n     ══════════════════════════════════════════════\n       Deobfuscating or Dumping is Strictly\n                 Prohibited.\n              With love, Kris\n     ══════════════════════════════════════════════\n]]\n\n";
 function obfuscateLua(src,opts){
   opts=opts||{};
   const seed=opts.seed||Date.now();
@@ -421,7 +422,7 @@ function obfuscateLua(src,opts){
   const body=generate(finalTokens);
   const antiTamper=opts.antiTamper?buildAntiTamper(tamperFlag):'';
   const header=buildHeader(bxName,dName);
-  return header+pre+antiTamper+body;
+  return BANNER+header+pre+antiTamper+body;
 }
 
 function generate(tokens){
