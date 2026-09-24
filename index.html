@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NullFuscator (Lua)</title>
+  <style>
+    body { font-family: monospace; background: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }
+    h1 { color: #58a6ff; text-align: center; }
+    .container { max-width: 900px; margin: auto; }
+    textarea { width: 100%; height: 200px; background: #161b22; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px; padding: 10px; font-family: monospace; font-size: 14px; }
+    button { background: #238636; color: white; border: none; padding: 12px 24px; border-radius: 6px; cursor: pointer; font-size: 16px; margin: 10px 0; }
+    button:hover { background: #2ea043; }
+    .output { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 10px; margin-top: 10px; white-space: pre-wrap; word-break: break-all; min-height: 100px; font-size: 12px; }
+    .error { color: #f85149; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>NullFuscator (Lua)</h1>
+    <p>Paste your Lua code below to obfuscate it.</p>
+    <textarea id="inputCode" placeholder="-- Your Lua code here..."></textarea>
+    <br>
+    <button onclick="obfuscate()">Obfuscate</button>
+    <button onclick="copyOutput()">Copy Output</button>
+    <div class="output" id="output">Obfuscated code will appear here...</div>
+  </div>
+  <script>
+    function obfuscateLua(code) {
+      // Generate a random name for the decoder function
+      const randName = '_0x' + Math.random().toString(16).substr(2, 6);
+
+      // 1. Encode all string literals into hex and replace with decoder calls
+      code = code.replace(/(["'])(?:(?=(\\?))\2.)*?\1/g, function(match) {
+        const str = match.slice(1, -1); // remove quotes
+        let hex = '';
+        for (let i = 0; i < str.length; i++) {
+          hex += str.charCodeAt(i).toString(16).padStart(2, '0');
+        }
+        return randName + '("' + hex + '")';
+      });
+
+      // 2. Remove comments
+      code = code.replace(/--\[\[[\s\S]*?\]\]/g, ''); // multi-line
+      code = code.replace(/--.*$/gm, '');              // single-line
+
+      // 3. Minify whitespace
+      code = code.split('\n').map(line => line.trim()).filter(line => line.length > 0).join(' ');
+      code = code.replace(/\s+/g, ' ');
+
+      // 4. Prepend the decoder function
+      const decoder = `local function ${randName}(s) return (s:gsub('..', function(cc) return string.char(tonumber(cc, 16)) end)) end\n`;
+      return decoder + code;
+    }
+
+    function obfuscate() {
+      const input = document.getElementById('inputCode').value;
+      if (!input.trim()) { alert('Please enter some code.'); return; }
+      try {
+        const result = obfuscateLua(input);
+        document.getElementById('output').textContent = result;
+      } catch (e) {
+        document.getElementById('output').innerHTML = '<span class="error">Error: ' + e.message + '</span>';
+      }
+    }
+
+    function copyOutput() {
+      const output = document.getElementById('output').textContent;
+      navigator.clipboard.writeText(output).then(() => alert('Copied!'));
+    }
+  </script>
+</body>
+</html>
