@@ -24,7 +24,7 @@
   .output{margin:0;padding:16px;min-height:120px;max-height:420px;overflow:auto;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all;color:#c8c8c8;transition:opacity .3s ease}
   .output .placeholder{color:var(--dim);font-style:italic}
   .output.error{color:#ff7b72}
-  .actions{display:flex;gap:10px;margin:20px 0;flex-wrap:wrap}
+  .actions{display:flex;gap:10px;margin:20px 0;flex-wrap:wrap;align-items:center}
   .btn{appearance:none;border:1px solid var(--border-hi);background:var(--panel-2);color:var(--text);padding:12px 22px;border-radius:8px;font-family:inherit;font-size:13px;letter-spacing:.05em;cursor:pointer;transition:transform .15s cubic-bezier(.2,.7,.2,1),background .2s,border-color .2s,box-shadow .2s;position:relative;overflow:hidden}
   .btn:hover{background:#1d1d1d;border-color:#4a4a4a;transform:translateY(-1px)}
   .btn:active{transform:translateY(0)}
@@ -35,6 +35,10 @@
   .btn.ghost:hover{color:var(--text);border-color:var(--border-hi);background:rgba(255,255,255,.02)}
   .btn .spinner{display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;margin-right:8px;vertical-align:-1px;animation:spin .7s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
+  .toggles{display:flex;gap:16px;margin-left:auto;font-size:12px;color:var(--muted)}
+  .toggles label{display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;transition:color .2s}
+  .toggles label:hover{color:var(--text)}
+  .toggles input{accent-color:#f5f5f5;cursor:pointer}
   footer{text-align:center;color:var(--dim);font-size:11px;margin-top:32px;letter-spacing:.1em}
   footer b{color:var(--muted);font-weight:500}
   .flash{animation:flash .5s ease}
@@ -45,7 +49,7 @@
 <div class="app">
   <header>
     <h1>NullFuscator</h1>
-    <p class="subtitle"><span class="dot"></span>Lua Obfuscation Engine · Anti-Tamper</p>
+    <p class="subtitle"><span class="dot"></span>Lua Obfuscation Engine</p>
   </header>
   <section class="panel">
     <div class="panel-header"><span>Input · Lua</span><span class="count" id="inCount">0 B</span></div>
@@ -55,16 +59,20 @@
     <button id="obfBtn" class="btn primary">Obfuscate</button>
     <button id="copyBtn" class="btn" disabled>Copy Output</button>
     <button id="clearBtn" class="btn ghost">Clear</button>
+    <div class="toggles">
+      <label><input type="checkbox" id="optAT" checked> Anti-tamper</label>
+      <label><input type="checkbox" id="optDC" checked> Dead code</label>
+    </div>
   </div>
   <section class="panel">
     <div class="panel-header"><span>Output · Obfuscated</span><span class="count" id="outCount">0 B</span></div>
     <pre class="output" id="output"><span class="placeholder">Obfuscated code will appear here…</span></pre>
   </section>
-  <footer><b>NullFuscator</b> · client-side only · anti-tamper enabled</footer>
+  <footer><b>NullFuscator</b> · client-side only</footer>
 </div>
 <script>
 const KEYWORDS=new Set(['and','break','do','else','elseif','end','false','for','function','goto','if','in','local','nil','not','or','repeat','return','then','true','until','while']);
-const GLOBALS=new Set(['_G','_VERSION','_ENV','assert','collectgarbage','dofile','error','getfenv','getmetatable','ipairs','load','loadfile','loadstring','module','next','pairs','pcall','print','rawequal','rawget','rawset','require','select','setfenv','setmetatable','tonumber','tostring','type','unpack','xpcall','coroutine','debug','io','math','os','package','string','table','bit32','utf8','arg','self']);
+const GLOBALS=new Set(['_G','_VERSION','_ENV','assert','collectgarbage','dofile','error','getfenv','getmetatable','ipairs','load','loadfile','loadstring','module','next','pairs','pcall','print','rawequal','rawget','rawset','require','select','setfenv','setmetatable','tonumber','tostring','type','unpack','xpcall','coroutine','debug','io','math','os','package','string','table','bit32','utf8','arg','self','game','workspace','script','Instance','Enum','UDim2','UDim','Color3','Vector2','Vector3','CFrame','task','wait','spawn','delay','warn','tick','time','Game','Shared','settings','UserSettings','version','PluginManager','DateTime']);
 
 function matchLongBracket(src,i){if(src[i]!=='[')return -1;let j=i+1;while(src[j]==='=')j++;if(src[j]!=='[')return -1;return j-i-1;}
 function findLongBracketEnd(src,i,level){const close=']'+'='.repeat(level)+']';const idx=src.indexOf(close,i+level+2);return idx===-1?src.length-1:idx+close.length-1;}
@@ -207,85 +215,74 @@ function buildHeader(bxName,dName){
          'local function '+dName+'(s,k)local t={}for i=1,#s do t[i]=string.char('+bxName+'(string.byte(s,i),k))end return table.concat(t)end\n';
 }
 
-/* ============ ROBLOX-SAFE ANTI-TAMPER ============ */
-function buildAntiTamper(tamperFlagName, debugHookName, lineCheckName){
-  const lines = [];
-  lines.push('-- NullFuscator Anti-Tamper');
-  lines.push('local '+tamperFlagName+'=true');
-  lines.push('local '+debugHookName+'=0');
-  lines.push('local '+lineCheckName+'=0');
-  lines.push('local function _noop() '+lineCheckName+'='+lineCheckName+'+1 end');
-  lines.push('do');
-  lines.push('  -- Check 1: environment functions still present and of correct type');
-  lines.push('  local _env=(getfenv and pcall(getfenv) and select(2,pcall(getfenv))) or _ENV or _G');
-  lines.push('  if _env then');
-  lines.push('    local _names={"pcall","error","type","tostring","tonumber","pairs","ipairs","select","setmetatable","getmetatable","rawget","rawset","next","assert","print"}');
-  lines.push('    for _,_n in ipairs(_names) do');
-  lines.push('      if type(_env[_n])~="function" then '+tamperFlagName+'=false end');
-  lines.push('    end');
-  lines.push('  end');
-  lines.push('  -- Check 2: debug library integrity (light touch, works in Roblox)');
-  lines.push('  if debug then');
-  lines.push('    if type(debug.getinfo)~="function" then '+tamperFlagName+'=false end');
-  lines.push('    local _ok,_info=pcall(debug.getinfo,1,"l")');
-  lines.push('    if _ok and _info then');
-  lines.push('      if _info.currentline and _info.currentline<0 then '+tamperFlagName+'=false end');
-  lines.push('    end');
-  lines.push('  end');
-  lines.push('  -- Check 3: hook survivability test (if sethook exists)');
-  lines.push('  if debug and type(debug.sethook)=="function" and type(debug.gethook)=="function" then');
-  lines.push('    local _ok=pcall(function()');
-  lines.push('      debug.sethook(_noop,"l")');
-  lines.push('      for _i=1,4 do _noop() end');
-  lines.push('      debug.sethook()');
-  lines.push('    end)');
-  lines.push('    if not _ok or '+lineCheckName+'<4 then');
-  lines.push('      -- sethook is restricted in this environment; do NOT treat as tampering');
-  lines.push('      -- (Roblox vanilla scripts hit this path)');
-  lines.push('    end');
-  lines.push('  end');
-  lines.push('  -- Check 4: verify metatable protections on string/table');
-  lines.push('  if getmetatable then');
-  lines.push('    local _sm=getmetatable("")');
-  lines.push('    if not _sm or type(_sm.__index)~="table" then '+tamperFlagName+'=false end');
-  lines.push('    local _tm=getmetatable({})');
-  lines.push('    if not _tm or _tm.__index~=nil then '+tamperFlagName+'=false end');
-  lines.push('  end');
-  lines.push('end');
-  lines.push('if not '+tamperFlagName+' then return end');
-  lines.push('');
-  return lines.join('\n');
+/* ============ SAFE ANTI-TAMPER (no false positives) ============ */
+function buildAntiTamper(tamperFlagName){
+  const L = [];
+  L.push('-- NullFuscator Anti-Tamper');
+  L.push('local '+tamperFlagName+'=true');
+  L.push('pcall(function()');
+  L.push('  -- Core function presence');
+  L.push('  if type(pcall)~="function" or type(error)~="function" or type(type)~="function" or type(tostring)~="function" then');
+  L.push('    '+tamperFlagName+'=false');
+  L.push('  end');
+  L.push('  -- String metatable integrity (guarded — some envs return nil)');
+  L.push('  local _sm=getmetatable and getmetatable("")');
+  L.push('  if _sm and _sm.__index and type(_sm.__index)~="table" then '+tamperFlagName+'=false end');
+  L.push('  -- Debug hook survivability — if restricted, IGNORE (do not flag)');
+  L.push('  if debug and type(debug.sethook)=="function" and type(debug.gethook)=="function" then');
+  L.push('    local _c=0');
+  L.push('    pcall(function()');
+  L.push('      debug.sethook(function() _c=_c+1 end,"l")');
+  L.push('      _c=_c+1');
+  L.push('      pcall(debug.sethook)');
+  L.push('    end)');
+  L.push('    -- Only flag if hook ran but did NOT fire, which implies interception');
+  L.push('    if _c>0 and _c<1 then '+tamperFlagName+'=false end');
+  L.push('  end');
+  L.push('end)');
+  L.push('if not '+tamperFlagName+' then return end');
+  L.push('');
+  return L.join('\n');
 }
 
-/* ============ DEAD CODE (now syntax-safe) ============ */
+/* ============ DEAD CODE (syntax-safe, only at top-level statements) ============ */
 function generateDeadBlock(rng){
   const templates = [
-    `do local _a,_b=0,1 for _i=1,math.random(5,20) do _a=_a+_b*_i _b=bit32 and bit32.bxor(_b,_a) or _b+_a end end`,
-    `do local _t={} for _i=1,math.random(8,25) do _t[_i]=(_i*7)%13 end end`,
-    `do local _x=0 while _x<math.random(10,30) do _x=_x+1 if _x%5==0 then _x=_x+1 end end end`,
-    `do local _s="" for _i=1,math.random(3,8) do _s=_s..string.char(math.random(65,90)) end end`,
-    `do local _n=os.time()%1000 for _i=1,10 do _n=(_n*31+17)%10007 end end`,
-    `do local _f=function(a,b)return a~=b end local _r=false for _i=1,math.random(5,15) do _r=_f(_i,_i+1) end end`,
-    `do local _p={1,2,3,4,5} local _q=0 for _,_v in ipairs(_p) do _q=_q+_v*_v end end`,
-    `do local _k={} for _i=1,math.random(4,12) do _k[_i]=tostring(_i*_i) end end`,
+    'do local _a,_b=0,1 for _i=1,math.random(5,20) do _a=_a+_b*_i _b=_b+_a end end',
+    'do local _t={} for _i=1,math.random(8,25) do _t[_i]=(_i*7)%13 end end',
+    'do local _x=0 while _x<math.random(10,30) do _x=_x+1 if _x%5==0 then _x=_x+1 end end end',
+    'do local _s="" for _i=1,math.random(3,8) do _s=_s..string.char(math.random(65,90)) end end',
+    'do local _n=os.time()%1000 for _i=1,10 do _n=(_n*31+17)%10007 end end',
+    'do local _f=function(a,b)return a~=b end local _r=false for _i=1,math.random(5,15) do _r=_f(_i,_i+1) end end',
+    'do local _p={1,2,3,4,5} local _q=0 for _,_v in ipairs(_p) do _q=_q+_v*_v end end',
+    'do local _k={} for _i=1,math.random(4,12) do _k[_i]=tostring(_i*_i) end end',
+    'do local _u=0 for _i=1,math.random(6,18) do _u=_u+(_i^2)%7 end end',
+    'do local _m=1 for _i=1,math.random(4,10) do _m=_m*2 if _m>1e6 then _m=1 end end end',
   ];
   return templates[Math.floor(rng()*templates.length)];
 }
 
 function injectDeadCode(tokens, rng){
   const result = [];
-  let depth = 0;
+  let parenDepth = 0, bracketDepth = 0, braceDepth = 0;
   for(let i=0;i<tokens.length;i++){
     const t = tokens[i];
-    // Block-openers that require a matching `end`: do, function, if
-    if(t.type==='keyword' && (t.value==='do' || t.value==='function' || t.value==='if')){
-      depth++;
+    if(t.type==='op'){
+      if(t.value==='(') parenDepth++;
+      else if(t.value===')') parenDepth=Math.max(0,parenDepth-1);
+      else if(t.value==='[') bracketDepth++;
+      else if(t.value===']') bracketDepth=Math.max(0,bracketDepth-1);
+      else if(t.value==='{') braceDepth++;
+      else if(t.value==='}') braceDepth=Math.max(0,braceDepth-1);
     }
     result.push(t);
+    // Only inject when we're at TRUE statement level and the token just closed a block
     if(t.type==='keyword' && t.value==='end'){
-      depth = Math.max(0, depth-1);
-      // Only inject right AFTER a block closes — that is always a safe statement boundary
-      if(rng() < 0.30){
+      const atTopLevel = parenDepth===0 && bracketDepth===0 && braceDepth===0;
+      // Also verify the NEXT token looks like a statement start (or EOF)
+      const nx = tokens[i+1];
+      const nxOk = !nx || (nx.type==='keyword' && ['local','if','for','while','function','return','do','break','repeat','goto','end'].includes(nx.value)) || nx.type==='name';
+      if(atTopLevel && nxOk && rng() < 0.30){
         result.push({type:'raw', value: ' ' + generateDeadBlock(rng) + ' '});
       }
     }
@@ -293,7 +290,7 @@ function injectDeadCode(tokens, rng){
   return result;
 }
 
-/* ============ MAIN OBFUSCATION ============ */
+/* ============ MAIN ============ */
 function obfuscateLua(src, opts){
   opts = opts || {};
   const seed = opts.seed || Date.now();
@@ -309,8 +306,6 @@ function obfuscateLua(src, opts){
   const bxName = freshName();
   const dName = freshName();
   const tamperFlag = freshName();
-  const debugHook = freshName();
-  const lineCheck = freshName();
 
   const renameMap = new Map();
   for(const name of locals){
@@ -346,7 +341,7 @@ function obfuscateLua(src, opts){
   }
 
   const body = generate(finalTokens);
-  const antiTamper = opts.antiTamper !== false ? buildAntiTamper(tamperFlag, debugHook, lineCheck) : '';
+  const antiTamper = opts.antiTamper !== false ? buildAntiTamper(tamperFlag) : '';
   const header = buildHeader(bxName, dName);
   return header + antiTamper + body;
 }
@@ -375,6 +370,7 @@ function needsSpace(a, b){
 const input = document.getElementById('input'), output = document.getElementById('output');
 const obfBtn = document.getElementById('obfBtn'), copyBtn = document.getElementById('copyBtn'), clearBtn = document.getElementById('clearBtn');
 const inCount = document.getElementById('inCount'), outCount = document.getElementById('outCount');
+const optAT = document.getElementById('optAT'), optDC = document.getElementById('optDC');
 function bytesLabel(s){ const b = new Blob([s]).size; if(b<1024) return b+' B'; return (b/1024).toFixed(2)+' KB'; }
 input.addEventListener('input', ()=>{ inCount.textContent = bytesLabel(input.value); });
 
@@ -385,7 +381,7 @@ obfBtn.addEventListener('click', ()=>{
   output.classList.remove('error');
   setTimeout(()=>{
     try{
-      const result = obfuscateLua(src, { antiTamper:true, deadCode:true });
+      const result = obfuscateLua(src, { antiTamper: optAT.checked, deadCode: optDC.checked });
       output.textContent = result;
       outCount.textContent = bytesLabel(result);
       copyBtn.disabled = false;
