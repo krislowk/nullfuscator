@@ -1,73 +1,362 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>NullFuscator (Lua)</title>
-  <style>
-    body { font-family: monospace; background: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }
-    h1 { color: #58a6ff; text-align: center; }
-    .container { max-width: 900px; margin: auto; }
-    textarea { width: 100%; height: 200px; background: #161b22; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px; padding: 10px; font-family: monospace; font-size: 14px; }
-    button { background: #238636; color: white; border: none; padding: 12px 24px; border-radius: 6px; cursor: pointer; font-size: 16px; margin: 10px 0; }
-    button:hover { background: #2ea043; }
-    .output { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 10px; margin-top: 10px; white-space: pre-wrap; word-break: break-all; min-height: 100px; font-size: 12px; }
-    .error { color: #f85149; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NullFuscator — Lua Obfuscator</title>
+<style>
+  :root {
+    --bg:#0a0a0a; --panel:#111; --panel-2:#161616; --border:#262626;
+    --border-hi:#3a3a3a; --text:#e5e5e5; --muted:#8a8a8a; --dim:#5a5a5a;
+    --shadow:0 1px 0 rgba(255,255,255,.03),0 8px 24px rgba(0,0,0,.4);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg);color:var(--text);min-height:100vh;
+    font-family:'JetBrains Mono','Fira Code',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    background-image:
+      radial-gradient(circle at 20% 0%,rgba(255,255,255,.04),transparent 40%),
+      radial-gradient(circle at 80% 100%,rgba(255,255,255,.03),transparent 40%);
+    display:flex;align-items:flex-start;justify-content:center;
+    padding:48px 20px 64px;
+  }
+  .app{width:100%;max-width:900px;animation:rise .6s cubic-bezier(.2,.7,.2,1) both}
+  @keyframes rise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+  header{text-align:center;margin-bottom:36px}
+  h1{
+    font-size:clamp(28px,5vw,44px);font-weight:700;letter-spacing:-.03em;margin:0 0 8px;
+    background:linear-gradient(180deg,#fff 0%,#9a9a9a 100%);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .subtitle{margin:0;color:var(--muted);font-size:13px;letter-spacing:.14em;text-transform:uppercase}
+  .subtitle .dot{
+    display:inline-block;width:6px;height:6px;border-radius:50%;background:#4ade80;
+    margin-right:8px;vertical-align:middle;box-shadow:0 0 8px #4ade80;
+    animation:pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  .panel{
+    background:var(--panel);border:1px solid var(--border);border-radius:12px;
+    overflow:hidden;box-shadow:var(--shadow);
+    transition:border-color .25s ease,box-shadow .25s ease;
+  }
+  .panel:focus-within{border-color:var(--border-hi);box-shadow:var(--shadow),0 0 0 4px rgba(255,255,255,.04)}
+  .panel-header{
+    display:flex;justify-content:space-between;align-items:center;
+    padding:10px 14px;background:var(--panel-2);border-bottom:1px solid var(--border);
+    font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
+  }
+  .panel-header .count{font-variant-numeric:tabular-nums;color:var(--dim)}
+  textarea{
+    width:100%;min-height:220px;background:transparent;border:none;outline:none;
+    resize:vertical;color:var(--text);padding:16px;font-family:inherit;
+    font-size:13px;line-height:1.6;tab-size:2;
+  }
+  textarea::placeholder{color:var(--dim)}
+  .output{
+    margin:0;padding:16px;min-height:120px;max-height:420px;overflow:auto;
+    font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all;
+    color:#c8c8c8;transition:opacity .3s ease;
+  }
+  .output .placeholder{color:var(--dim);font-style:italic}
+  .output.error{color:#ff7b72}
+  .actions{display:flex;gap:10px;margin:20px 0;flex-wrap:wrap}
+  .btn{
+    appearance:none;border:1px solid var(--border-hi);background:var(--panel-2);
+    color:var(--text);padding:12px 22px;border-radius:8px;font-family:inherit;
+    font-size:13px;letter-spacing:.05em;cursor:pointer;
+    transition:transform .15s cubic-bezier(.2,.7,.2,1),background .2s,border-color .2s,box-shadow .2s;
+    position:relative;overflow:hidden;
+  }
+  .btn:hover{background:#1d1d1d;border-color:#4a4a4a;transform:translateY(-1px)}
+  .btn:active{transform:translateY(0)}
+  .btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+  .btn.primary{background:#f5f5f5;color:#0a0a0a;border-color:#fff;font-weight:600}
+  .btn.primary:hover{background:#fff;box-shadow:0 6px 24px rgba(255,255,255,.15)}
+  .btn.ghost{background:transparent;border-color:var(--border);color:var(--muted)}
+  .btn.ghost:hover{color:var(--text);border-color:var(--border-hi);background:rgba(255,255,255,.02)}
+  .btn .spinner{
+    display:inline-block;width:12px;height:12px;border:2px solid currentColor;
+    border-top-color:transparent;border-radius:50%;margin-right:8px;
+    vertical-align:-1px;animation:spin .7s linear infinite;
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+  footer{text-align:center;color:var(--dim);font-size:11px;margin-top:32px;letter-spacing:.1em}
+  footer b{color:var(--muted);font-weight:500}
+  .flash{animation:flash .5s ease}
+  @keyframes flash{0%{background:rgba(74,222,128,.15)}100%{background:transparent}}
+</style>
 </head>
 <body>
-  <div class="container">
-    <h1>NullFuscator (Lua)</h1>
-    <p>Paste your Lua code below to obfuscate it.</p>
-    <textarea id="inputCode" placeholder="-- Your Lua code here..."></textarea>
-    <br>
-    <button onclick="obfuscate()">Obfuscate</button>
-    <button onclick="copyOutput()">Copy Output</button>
-    <div class="output" id="output">Obfuscated code will appear here...</div>
+<div class="app">
+  <header>
+    <h1>NullFuscator</h1>
+    <p class="subtitle"><span class="dot"></span>Lua Obfuscation Engine</p>
+  </header>
+  <section class="panel">
+    <div class="panel-header">
+      <span>Input · Lua</span>
+      <span class="count" id="inCount">0 B</span>
+    </div>
+    <textarea id="input" spellcheck="false" placeholder="-- paste your Lua source here&#10;local greet = function(name)&#10;  print('Hello, ' .. name .. '!')&#10;end&#10;greet('world')"></textarea>
+  </section>
+  <div class="actions">
+    <button id="obfBtn" class="btn primary">Obfuscate</button>
+    <button id="copyBtn" class="btn" disabled>Copy Output</button>
+    <button id="clearBtn" class="btn ghost">Clear</button>
   </div>
-  <script>
-    function obfuscateLua(code) {
-      // Generate a random name for the decoder function
-      const randName = '_0x' + Math.random().toString(16).substr(2, 6);
+  <section class="panel">
+    <div class="panel-header">
+      <span>Output · Obfuscated</span>
+      <span class="count" id="outCount">0 B</span>
+    </div>
+    <pre class="output" id="output"><span class="placeholder">Obfuscated code will appear here…</span></pre>
+  </section>
+  <footer><b>NullFuscator</b> · client-side only · your code never leaves the browser</footer>
+</div>
+<script>
+const KEYWORDS=new Set(['and','break','do','else','elseif','end','false','for','function','goto','if','in','local','nil','not','or','repeat','return','then','true','until','while']);
+const GLOBALS=new Set(['_G','_VERSION','_ENV','assert','collectgarbage','dofile','error','getfenv','getmetatable','ipairs','load','loadfile','loadstring','module','next','pairs','pcall','print','rawequal','rawget','rawset','require','select','setfenv','setmetatable','tonumber','tostring','type','unpack','xpcall','coroutine','debug','io','math','os','package','string','table','bit32','utf8','arg','self']);
 
-      // 1. Encode all string literals into hex and replace with decoder calls
-      code = code.replace(/(["'])(?:(?=(\\?))\2.)*?\1/g, function(match) {
-        const str = match.slice(1, -1); // remove quotes
-        let hex = '';
-        for (let i = 0; i < str.length; i++) {
-          hex += str.charCodeAt(i).toString(16).padStart(2, '0');
-        }
-        return randName + '("' + hex + '")';
-      });
+function matchLongBracket(src,i){if(src[i]!=='[')return -1;let j=i+1;while(src[j]==='=')j++;if(src[j]!=='[')return -1;return j-i-1;}
+function findLongBracketEnd(src,i,level){const close=']'+'='.repeat(level)+']';const idx=src.indexOf(close,i+level+2);return idx===-1?src.length-1:idx+close.length-1;}
 
-      // 2. Remove comments
-      code = code.replace(/--\[\[[\s\S]*?\]\]/g, ''); // multi-line
-      code = code.replace(/--.*$/gm, '');              // single-line
-
-      // 3. Minify whitespace
-      code = code.split('\n').map(line => line.trim()).filter(line => line.length > 0).join(' ');
-      code = code.replace(/\s+/g, ' ');
-
-      // 4. Prepend the decoder function
-      const decoder = `local function ${randName}(s) return (s:gsub('..', function(cc) return string.char(tonumber(cc, 16)) end)) end\n`;
-      return decoder + code;
+function tokenize(src){
+  const tokens=[];const n=src.length;let i=0;
+  while(i<n){
+    const c=src[i];
+    if(/\s/.test(c)){let j=i;while(j<n&&/\s/.test(src[j]))j++;tokens.push({type:'ws',value:src.slice(i,j)});i=j;continue;}
+    if(c==='-'&&src[i+1]==='-'){
+      if(src[i+2]==='['){const lvl=matchLongBracket(src,i+2);if(lvl!==-1){const end=findLongBracketEnd(src,i+2,lvl);tokens.push({type:'comment',value:src.slice(i,end+1)});i=end+1;continue;}}
+      let j=i;while(j<n&&src[j]!=='\n')j++;tokens.push({type:'comment',value:src.slice(i,j)});i=j;continue;
     }
+    if(c==='['){const lvl=matchLongBracket(src,i);if(lvl!==-1){const end=findLongBracketEnd(src,i,lvl);tokens.push({type:'string',value:src.slice(i,end+1)});i=end+1;continue;}}
+    if(c==='"'||c==="'"){
+      let j=i+1;while(j<n){if(src[j]==='\\'){j+=2;continue;}if(src[j]===c){j++;break;}if(src[j]==='\n')break;j++;}
+      tokens.push({type:'string',value:src.slice(i,j)});i=j;continue;
+    }
+    if(/[0-9]/.test(c)||(c==='.'&&/[0-9]/.test(src[i+1]||''))){
+      let j=i;
+      if(c==='0'&&(src[i+1]==='x'||src[i+1]==='X')){
+        j=i+2;while(j<n&&/[0-9a-fA-F.]/.test(src[j]))j++;
+        if(src[j]==='p'||src[j]==='P'){j++;if(src[j]==='+'||src[j]==='-')j++;while(j<n&&/[0-9]/.test(src[j]))j++;}
+      }else{
+        while(j<n&&/[0-9]/.test(src[j]))j++;
+        if(src[j]==='.'){j++;while(j<n&&/[0-9]/.test(src[j]))j++;}
+        if(src[j]==='e'||src[j]==='E'){j++;if(src[j]==='+'||src[j]==='-')j++;while(j<n&&/[0-9]/.test(src[j]))j++;}
+      }
+      tokens.push({type:'number',value:src.slice(i,j)});i=j;continue;
+    }
+    if(/[A-Za-z_]/.test(c)){
+      let j=i;while(j<n&&/[A-Za-z0-9_]/.test(src[j]))j++;
+      const v=src.slice(i,j);tokens.push({type:KEYWORDS.has(v)?'keyword':'name',value:v});i=j;continue;
+    }
+    const three=src.substr(i,3);
+    if(three==='...'){tokens.push({type:'op',value:'...'});i+=3;continue;}
+    const two=src.substr(i,2);
+    if(['==','~=','<=','>=','..','::','//','<<','>>'].includes(two)){tokens.push({type:'op',value:two});i+=2;continue;}
+    tokens.push({type:'op',value:c});i++;
+  }
+  return tokens;
+}
 
-    function obfuscate() {
-      const input = document.getElementById('inputCode').value;
-      if (!input.trim()) { alert('Please enter some code.'); return; }
-      try {
-        const result = obfuscateLua(input);
-        document.getElementById('output').textContent = result;
-      } catch (e) {
-        document.getElementById('output').innerHTML = '<span class="error">Error: ' + e.message + '</span>';
+function collectLocals(tokens){
+  const locals=new Set();
+  for(let i=0;i<tokens.length;i++){
+    const t=tokens[i];
+    if(t.type==='keyword'&&t.value==='local'){
+      let j=i+1;
+      if(tokens[j]&&tokens[j].type==='keyword'&&tokens[j].value==='function'){
+        j++;if(tokens[j]&&tokens[j].type==='name')locals.add(tokens[j].value);
+      }else{
+        while(j<tokens.length){
+          const tk=tokens[j];
+          if(tk.type==='name'){locals.add(tk.value);j++;}
+          else if(tk.type==='op'&&tk.value===','){j++;}
+          else break;
+        }
       }
     }
-
-    function copyOutput() {
-      const output = document.getElementById('output').textContent;
-      navigator.clipboard.writeText(output).then(() => alert('Copied!'));
+    if(t.type==='keyword'&&t.value==='function'){
+      let j=i+1;
+      while(j<tokens.length&&tokens[j].value!=='('){if(tokens[j].type==='keyword')break;j++;}
+      if(j<tokens.length&&tokens[j].value==='('){
+        j++;
+        while(j<tokens.length&&tokens[j].value!==')'){
+          if(tokens[j].type==='name')locals.add(tokens[j].value);
+          j++;
+        }
+      }
     }
-  </script>
+    if(t.type==='keyword'&&t.value==='for'){
+      let j=i+1;
+      while(j<tokens.length){
+        const tk=tokens[j];
+        if(tk.type==='name'){locals.add(tk.value);j++;}
+        else if(tk.type==='op'&&tk.value===','){j++;}
+        else break;
+      }
+    }
+  }
+  return locals;
+}
+
+function parseLuaString(raw){
+  if(raw[0]==='['){
+    const level=matchLongBracket(raw,0);
+    let inner=raw.slice(level+2,raw.length-level-2);
+    if(inner.startsWith('\r\n'))inner=inner.slice(2);
+    else if(inner.startsWith('\n'))inner=inner.slice(1);
+    return inner;
+  }
+  const body=raw.slice(1,-1);let out='';
+  for(let i=0;i<body.length;i++){
+    const c=body[i];
+    if(c!=='\\'){out+=c;continue;}
+    const nx=body[i+1];
+    switch(nx){
+      case 'n':out+='\n';i++;break;
+      case 't':out+='\t';i++;break;
+      case 'r':out+='\r';i++;break;
+      case 'a':out+='\x07';i++;break;
+      case 'b':out+='\b';i++;break;
+      case 'f':out+='\f';i++;break;
+      case 'v':out+='\v';i++;break;
+      case '\\':out+='\\';i++;break;
+      case '"':out+='"';i++;break;
+      case "'":out+="'";i++;break;
+      case '\n':out+='\n';i++;break;
+      case '\r':out+='\n';i++;if(body[i+2]==='\n')i++;break;
+      case 'x':{let hex='';let j=i+2;while(j<body.length&&hex.length<2&&/[0-9a-fA-F]/.test(body[j])){hex+=body[j];j++;}out+=String.fromCharCode(parseInt(hex,16)||0);i=j-1;break;}
+      case 'z':{i++;while(i+1<body.length&&/\s/.test(body[i+1]))i++;break;}
+      default:
+        if(nx&&/[0-9]/.test(nx)){let num='';let j=i+1;while(j<body.length&&num.length<3&&/[0-9]/.test(body[j])){num+=body[j];j++;}out+=String.fromCharCode(parseInt(num,10));i=j-1;}
+        else if(nx!==undefined){out+=nx;i++;}
+    }
+  }
+  return out;
+}
+
+function encodeString(str,dName){
+  const key=1+Math.floor(Math.random()*255);
+  let escaped='';
+  for(let i=0;i<str.length;i++){
+    let byte=str.charCodeAt(i)&0xff;
+    byte=byte^key;
+    escaped+='\\'+byte.toString().padStart(3,'0');
+  }
+  return dName+'("'+escaped+'",'+key+')';
+}
+
+function encodeNumber(numStr){
+  if(/^\d+$/.test(numStr)){const n=parseInt(numStr,10);return '(0x'+n.toString(16)+')';}
+  if(/^0[xX][0-9a-fA-F]+$/.test(numStr))return '('+numStr+')';
+  return numStr;
+}
+
+function buildHeader(bxName,dName){
+  return 'local '+bxName+'=bit32 and bit32.bxor or function(a,b)local r,p=0,1 while a>0 or b>0 do local x,y=a%2,b%2 if x~=y then r=r+p end a=(a-x)/2 b=(b-y)/2 p=p*2 end return r end '+
+         'local function '+dName+'(s,k)local t={}for i=1,#s do t[i]=string.char('+bxName+'(string.byte(s,i),k))end return table.concat(t)end\n';
+}
+
+function obfuscateLua(src){
+  let tokens=tokenize(src).filter(t=>t.type!=='ws'&&t.type!=='comment');
+  const locals=collectLocals(tokens);
+  const usedNames=new Set();
+  for(const t of tokens)if(t.type==='name')usedNames.add(t.value);
+  function freshName(){let n;do{n='_'+Math.random().toString(36).slice(2,8);}while(usedNames.has(n)||KEYWORDS.has(n));usedNames.add(n);return n;}
+  const bxName=freshName(),dName=freshName();
+  const renameMap=new Map();
+  for(const name of locals){
+    if(GLOBALS.has(name))continue;
+    if(name===bxName||name===dName)continue;
+    renameMap.set(name,freshName());
+  }
+  let braceDepth=0;
+  const out=[];
+  for(let i=0;i<tokens.length;i++){
+    const t=tokens[i];
+    if(t.type==='op'){
+      if(t.value==='{')braceDepth++;
+      else if(t.value==='}')braceDepth--;
+      out.push(t);continue;
+    }
+    if(t.type==='string'){out.push({type:'raw',value:encodeString(parseLuaString(t.value),dName)});continue;}
+    if(t.type==='number'){out.push({type:'raw',value:encodeNumber(t.value),numeric:true});continue;}
+    if(t.type==='name'){
+      const prev=out.length?out[out.length-1]:null;
+      if(prev&&prev.type==='op'&&(prev.value==='.'||prev.value===':'||prev.value==='::')){out.push(t);continue;}
+      if(prev&&prev.type==='keyword'&&prev.value==='goto'){out.push(t);continue;}
+      const nx0=tokens[i+1];
+      if(nx0&&nx0.type==='op'&&nx0.value==='::'){out.push(t);continue;}
+      if(braceDepth>0&&nx0&&nx0.type==='op'&&nx0.value==='='){out.push(t);continue;}
+      if(renameMap.has(t.value))out.push({type:'raw',value:renameMap.get(t.value)});
+      else out.push(t);
+      continue;
+    }
+    out.push(t);
+  }
+  const body=generate(out);
+  return buildHeader(bxName,dName)+body;
+}
+
+function generate(tokens){
+  let out='',prev=null;
+  for(const t of tokens){
+    if(prev&&needsSpace(prev,t))out+=' ';
+    out+=t.value;prev=t;
+  }
+  return out;
+}
+
+function needsSpace(a,b){
+  const aLast=a.value[a.value.length-1],bFirst=b.value[0];
+  const aWord=/[A-Za-z0-9_]/.test(aLast),bWord=/[A-Za-z0-9_]/.test(bFirst);
+  if(aWord&&bWord)return true;
+  if(a.value==='-'&&bFirst==='-')return true;
+  if(a.value.endsWith('..')&&b.numeric)return true;
+  if(a.numeric&&b.value.startsWith('..'))return true;
+  if(a.value==='['&&(bFirst==='['||bFirst==='='))return true;
+  return false;
+}
+
+/* ---- UI ---- */
+const input=document.getElementById('input'),output=document.getElementById('output');
+const obfBtn=document.getElementById('obfBtn'),copyBtn=document.getElementById('copyBtn'),clearBtn=document.getElementById('clearBtn');
+const inCount=document.getElementById('inCount'),outCount=document.getElementById('outCount');
+function bytesLabel(s){const b=new Blob([s]).size;if(b<1024)return b+' B';return (b/1024).toFixed(2)+' KB';}
+input.addEventListener('input',()=>{inCount.textContent=bytesLabel(input.value);});
+obfBtn.addEventListener('click',()=>{
+  const src=input.value;
+  if(!src.trim()){output.classList.add('error');output.textContent='Please paste some Lua code first.';return;}
+  obfBtn.disabled=true;obfBtn.innerHTML='<span class="spinner"></span>Working…';
+  output.classList.remove('error');
+  setTimeout(()=>{
+    try{
+      const result=obfuscateLua(src);
+      output.textContent=result;
+      outCount.textContent=bytesLabel(result);
+      copyBtn.disabled=false;
+      output.classList.remove('flash');void output.offsetWidth;output.classList.add('flash');
+    }catch(e){
+      output.classList.add('error');
+      output.textContent='Error: '+e.message;
+      outCount.textContent='—';copyBtn.disabled=true;
+    }finally{
+      obfBtn.disabled=false;obfBtn.textContent='Obfuscate';
+    }
+  },20);
+});
+copyBtn.addEventListener('click',async()=>{
+  try{await navigator.clipboard.writeText(output.textContent);copyBtn.textContent='Copied ✓';setTimeout(()=>{copyBtn.textContent='Copy Output';},1400);}
+  catch{copyBtn.textContent='Copy failed';setTimeout(()=>{copyBtn.textContent='Copy Output';},1400);}
+});
+clearBtn.addEventListener('click',()=>{
+  input.value='';inCount.textContent='0 B';
+  output.innerHTML='<span class="placeholder">Obfuscated code will appear here…</span>';
+  outCount.textContent='0 B';copyBtn.disabled=true;output.classList.remove('error');
+});
+</script>
 </body>
 </html>
