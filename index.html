@@ -239,25 +239,34 @@ function parseLuaString(raw){
 function encodeString(str,dName){
   const key=1+Math.floor(Math.random()*255);
   let escaped='';
+  let chk=0;
+  let hash=0;
   for(let i=0;i<str.length;i++){
     let byte=str.charCodeAt(i)&0xff;
+    chk=(chk+byte)%65536;
+    hash=(hash*131+byte)%65536;
     byte=byte^key;
-    escaped+='\\'+byte.toString().padStart(3,'0');
+    escaped+='\\\\'+byte.toString().padStart(3,'0');
   }
-  return dName+'("'+escaped+'",'+key+')';
+  return dName+'("'+escaped+'",'+key+','+chk+','+hash+')';
 }
-
 function encodeStringChunked(str,dName){
   if(str.length<3)return encodeString(str,dName);
-  const n=2+Math.floor(Math.random()*Math.min(3,str.length-1));
-  const parts=[];let pos=0;
-  for(let i=0;i<n;i++){
-    const remaining=str.length-pos;
-    const left=n-i;
-    const size=(i===n-1)?remaining:Math.max(1,Math.floor(remaining/left));
-    parts.push(str.slice(pos,pos+size));
-    pos+=size;
+  const maxParts=Math.min(6,str.length);
+  const n=2+Math.floor(Math.random()*Math.min(5,maxParts-1));
+  const cuts=[];
+  while(cuts.length<n-1){
+    const cut=1+Math.floor(Math.random()*(str.length-1));
+    if(!cuts.includes(cut))cuts.push(cut);
   }
+  cuts.sort((a,b)=>a-b);
+  const parts=[];
+  let pos=0;
+  for(const cut of cuts){
+    parts.push(str.slice(pos,cut));
+    pos=cut;
+  }
+  parts.push(str.slice(pos));
   return parts.map(c=>encodeString(c,dName)).join('..');
 }
 
@@ -278,10 +287,12 @@ function encodeNumber(numStr,useExpr){
 }
 
 function buildHeader(bxName,dName){
+  const chk=17^29;
+  const hashChk=(17*131+29)%65536;
   return 'local '+bxName+'=bit32 and bit32.bxor or function(a,b)local r,p=0,1 while a>0 or b>0 do local x,y=a%2,b%2 if x~=y then r=r+p end a=(a-x)/2 b=(b-y)/2 p=p*2 end return r end '+
-         'local function '+dName+'(s,k)local t={}for i=1,#s do t[i]=string.char('+bxName+'(string.byte(s,i),k))end return table.concat(t)end\n';
+         'local '+dName+'=function(s,k,c,h)local t={}local q=0 local z=0 for i=1,#s do local v='+bxName+'(string.byte(s,i),k) q=(q+v)%65536 z=(z*131+v)%65536 t[i]=string.char(v) end if k<1 or k>255 then error("decoder key integrity failure") end if c~=nil and q~=c then error("string integrity failure") end if h~=nil and z~=h then error("string hash integrity failure") end return table.concat(t)end\n'+
+         'do local _n='+bxName+'(17,29) local _h=(17*131+29)%65536 if _n~='+chk+' or _h~='+hashChk+' then error("decoder integrity failure") end end\n';
 }
-
 function buildAntiTamper(tamperFlagName){
   const L=[];
   L.push('-- NullFuscator Anti-Tamper');
@@ -292,14 +303,29 @@ function buildAntiTamper(tamperFlagName){
   L.push('  end');
   L.push('  local _sm=getmetatable and getmetatable("")');
   L.push('  if _sm and _sm.__index and type(_sm.__index)~="table" then '+tamperFlagName+'=false end');
+  L.push('  if debug and type(debug.getinfo)=="function" then');
+  L.push('    local _ok=pcall(function() local _i=debug.getinfo(1,"f") if _i~=nil and type(_i)~="table" then '+tamperFlagName+'=false end end)');
+  L.push('    if not _ok then '+tamperFlagName+'=false end');
+  L.push('  end');
   L.push('  if debug and type(debug.sethook)=="function" and type(debug.gethook)=="function" then');
   L.push('    local _c=0');
   L.push('    pcall(function()');
   L.push('      debug.sethook(function() _c=_c+1 end,"l")');
   L.push('      _c=_c+1');
-  L.push('      pcall(debug.sethook)');
+  L.push('      local _hk=debug.gethook()');
+  L.push('      if _hk==nil then '+tamperFlagName+'=false end');
+  L.push('      debug.sethook()');
   L.push('    end)');
-  L.push('    if _c>0 and _c<1 then '+tamperFlagName+'=false end');
+  L.push('    if _c<1 then '+tamperFlagName+'=false end');
+  L.push('  end');
+  L.push('  pcall(function()');
+  L.push('    local _s=tostring');
+  L.push('    local _v=_s(12345)');
+  L.push('    if type(_v)~="string" then '+tamperFlagName+'=false end');
+  L.push('  end');
+  L.push('  pcall(function()');
+  L.push('    local _ok,_v=pcall(function() return 7*11 end)');
+  L.push('    if not _ok or _v~=77 then '+tamperFlagName+'=false end');
   L.push('  end');
   L.push('end)');
   L.push('if not '+tamperFlagName+' then return end');
@@ -323,7 +349,24 @@ function generateDeadBlock(rng){
   return templates[Math.floor(rng()*templates.length)];
 }
 
-function injectDeadCode(tokens,rng,prob){
+function generateOpaqueBlock(rng){
+  const a=2+Math.floor(rng()*97);
+  const b=2+Math.floor(rng()*97);
+  const c=a*b;
+  const templates=[
+    'if ('+a+'*'+b+'=='+c+') then local _q='+a+'+'+b+' end',
+    'if (('+a+'+'+b+')-'+b+'=='+a+') then local _q='+c+'%'+b+' end',
+    'if (('+c+'//'+a+')=='+b+') then local _q='+a+'*'+b+' end',
+    'if (('+a+'^2-'+a+')%'+(a-1)+'==0) then local _q='+b+' end',
+    'if ((('+a+'*'+a+')-'+a+')%'+a+'==0) then local _q='+b+' end',
+    'if ((('+b+'+'+a+')-'+a+')=='+b+') then local _q='+c+' end',
+    'if (('+c+'%'+a+')==0) then local _q='+b+' end',
+    'if (('+a+'*'+b+')%'+a+'==0) then local _q='+c+' end',
+  ];
+  return templates[Math.floor(rng()*templates.length)];
+}
+
+function injectDeadCode(tokens,rng,prob,opaqueProb){
   const result=[];
   let parenDepth=0,bracketDepth=0,braceDepth=0;
   for(let i=0;i<tokens.length;i++){
@@ -343,6 +386,9 @@ function injectDeadCode(tokens,rng,prob){
       const nxOk=!nx||(nx.type==='keyword'&&['local','if','for','while','function','return','do','break','repeat','goto','end'].includes(nx.value))||nx.type==='name';
       if(atTop&&nxOk&&rng()<prob){
         result.push({type:'raw',value:' '+generateDeadBlock(rng)+' '});
+        if(opaqueProb>0&&rng()<opaqueProb){
+          result.push({type:'raw',value:' '+generateOpaqueBlock(rng)+' '});
+        }
       }
     }
   }
@@ -350,6 +396,2298 @@ function injectDeadCode(tokens,rng,prob){
 }
 
 const BANNER="--[[\n█▄░█ █░█ █░░ █░░ █▀ █░█\n█░▀█ █░█ █░░ █░░ █▀ █░█\n▀░░▀ ▀▀▀ ▀▀▀ ▀▀▀ ▀░ ▀▀▀\n▀▀ ▄▀ ▄▀▄ ▀█▀ ▄▀▄ █▀▀▄\n▀▄ █░ █▀█ ░█░ █░█ █▐█▀\n▀░ ░▀ ▀░▀ ░▀░ ░▀░ ▀░▀▀\n█░█ ▄█░\n█░█ ░█░\n░▀░ ▄█▄\n     ══════════════════════════════════════════════\n       Deobfuscating or Dumping is Strictly\n                 Prohibited.\n              With love, Kris\n     ══════════════════════════════════════════════\n]]\n\n";
+
+/* ---- NullFuscator V2 VM foundation ---- */
+function buildVMBytecode(tokens){
+  const code=[];
+  const constants=[];
+  const constMap=new Map();
+
+  function constant(value){
+    const key=typeof value+':'+String(value);
+    if(constMap.has(key))return constMap.get(key);
+    const id=constants.length;
+    constants.push(value);
+    constMap.set(key,id);
+    return id;
+  }
+
+  function significant(i){
+    while(i<tokens.length&&(tokens[i].type==='ws'||tokens[i].type==='comment'))i++;
+    return i;
+  }
+
+  let i=0;
+
+  while(i<tokens.length){
+    i=significant(i);
+    if(i>=tokens.length)break;
+
+    const t=tokens[i];
+
+    if(t.type==='keyword'&&t.value==='local'){
+      let j=significant(i+1);
+
+      if(j<tokens.length&&tokens[j].type==='name'){
+        const name=tokens[j].value;
+        const eq=significant(j+1);
+
+        if(eq<tokens.length&&tokens[eq].type==='op'&&tokens[eq].value==='='){
+          let k=significant(eq+1);
+          let depth=0;
+          let end=k;
+
+          while(end<tokens.length){
+            const x=tokens[end];
+
+            if(x.type==='op'){
+              if(x.value==='(')depth++;
+              else if(x.value===')')depth--;
+            }
+
+            if(depth===0&&x.type==='keyword'&&
+               (x.value==='local'||x.value==='if'||x.value==='then'||
+                x.value==='end'||x.value==='return')){
+              break;
+            }
+
+            if(depth===0&&x.type==='name'){
+              let q=significant(end+1);
+              if(q<tokens.length&&tokens[q].type==='op'&&(tokens[q].value==='='||tokens[q].value==='(')){
+                break;
+              }
+            }
+
+            if(depth===0&&x.type==='op'&&x.value===';')break;
+            end++;
+          }
+
+          code.push(...compileVMExpression(tokens,k,end,constant));
+          code.push({op:'STORE',arg:constant(name)});
+          i=end;
+          continue;
+        }
+      }
+
+      code.push({op:'TOKEN',arg:constant(t.value)});
+      i++;
+      continue;
+    }
+
+    if(t.type==='name'){
+      const next=significant(i+1);
+
+            if(next<tokens.length&&tokens[next].type==='op'&&tokens[next].value==='('){
+        let depth=1;
+        let close=next+1;
+
+        while(close<tokens.length&&depth>0){
+          if(tokens[close].type==='op'){
+            if(tokens[close].value==='(')depth++;
+            else if(tokens[close].value===')')depth--;
+          }
+          close++;
+        }
+
+        if(depth!==0)throw new Error('VM: unterminated function call');
+
+        code.push({op:'LOAD',arg:constant(t.value)});
+
+        let argStart=next+1;
+        let argDepth=0;
+        let argCount=0;
+
+        for(let a=next+1;a<close-1;a++){
+          const x=tokens[a];
+
+          if(x.type==='op'){
+            if(x.value==='('||x.value==='['||x.value==='{')argDepth++;
+            else if(x.value===')'||x.value===']'||x.value==='}')argDepth--;
+          }
+
+          if(argDepth===0&&x.type==='op'&&x.value===','){
+            if(a>argStart){
+              code.push(...compileVMExpression(tokens,argStart,a,constant));
+              argCount++;
+            }
+            argStart=a+1;
+          }
+        }
+
+        if(argStart<close-1){
+          code.push(...compileVMExpression(tokens,argStart,close-1,constant));
+          argCount++;
+        }
+
+        code.push({op:'CALLVALUE',arg:argCount});
+        i=close;
+        continue;
+      }
+
+      if(next<tokens.length&&tokens[next].type==='op'&&tokens[next].value==='='){
+        let k=significant(next+1);
+        let depth=0;
+        let end=k;
+
+        while(end<tokens.length){
+          const x=tokens[end];
+
+          if(x.type==='op'){
+            if(x.value==='(')depth++;
+            else if(x.value===')')depth--;
+          }
+
+          if(depth===0&&x.type==='keyword'&&
+             (x.value==='local'||x.value==='if'||x.value==='then'||
+              x.value==='end'||x.value==='return')){
+            break;
+          }
+
+          if(depth===0&&x.type==='name'){
+              let q=significant(end+1);
+              if(q<tokens.length&&tokens[q].type==='op'&&(tokens[q].value==='='||tokens[q].value==='(')){
+                break;
+              }
+            }
+
+            if(depth===0&&x.type==='op'&&x.value===';')break;
+          end++;
+        }
+
+        code.push(...compileVMExpression(tokens,k,end,constant));
+        code.push({op:'STORE',arg:constant(t.value)});
+        i=end;
+        continue;
+      }
+    }
+
+    if(t.type==='string'){
+      code.push({op:'PUSHK',arg:constant(parseLuaString(t.value))});
+    }else if(t.type==='number'){
+      code.push({op:'PUSHK',arg:constant(t.value)});
+    }else if(t.type==='keyword'&&t.value==='true'){
+      code.push({op:'PUSHK',arg:constant(true)});
+    }else if(t.type==='keyword'&&t.value==='false'){
+      code.push({op:'PUSHK',arg:constant(false)});
+    }else if(t.type==='keyword'&&t.value==='nil'){
+      code.push({op:'PUSHK',arg:constant(null)});
+    }else{
+      code.push({op:'TOKEN',arg:constant(t.value)});
+    }
+
+    i++;
+  }
+
+  code.push({op:'HALT'});
+  return {version:1,constants,code};
+}
+
+
+function vmLabel(name){
+  return {op:'LABEL',arg:name};
+}
+
+function vmJump(name){
+  return {op:'JMP',arg:name};
+}
+
+function vmJumpIfFalse(name){
+  return {op:'JZ',arg:name};
+}
+
+function vmJumpIfTrue(name){
+  return {op:'JNZ',arg:name};
+}
+
+
+function compileVMExpression(tokens,start,end,constant){
+  const output=[];
+  const ops=[];
+
+  const precedence={
+    'or':1,
+    'and':2,
+    '==':3,
+    '~=':3,
+    '<':3,
+    '>':3,
+    '<=':3,
+    '>=':3,
+    '..':4,
+    '+':5,
+    '-':5,
+    '*':6,
+    '/':6,
+    '%':6,
+    '^':7
+  };
+
+  const rightAssociative={
+    '^':true
+  };
+
+  const emitOp=op=>{
+    if(op==='and'||op==='or'){
+      output.push({op:'LOGIC',arg:constant(op)});
+    }else if(op==='not'||op==='-'){
+      output.push({op:'UNARY',arg:constant(op)});
+    }else{
+      output.push({op:'BIN',arg:constant(op)});
+    }
+  };
+
+  function compileValue(a,b){
+    const valueTokens=tokens.slice(a,b);
+    if(!valueTokens.length)return [];
+
+    const result=compileVMExpression(valueTokens,0,valueTokens.length,constant);
+    return result;
+  }
+
+  let i=start;
+
+  while(i<end){
+    while(i<end&&(tokens[i].type==='ws'||tokens[i].type==='comment'))i++;
+    if(i>=end)break;
+
+    const t=tokens[i];
+
+    if(t.type==='keyword'&&t.value==='function'){
+      let j=i+1;
+      while(j<end&&(tokens[j].type==='ws'||tokens[j].type==='comment'))j++;
+
+      if(j>=end||tokens[j].type!=='op'||tokens[j].value!=='('){
+        output.push({op:'TOKEN',arg:constant(t.value)});
+        i++;
+        continue;
+      }
+
+      const params=[];
+      j++;
+
+      while(j<end){
+        while(j<end&&(tokens[j].type==='ws'||tokens[j].type==='comment'))j++;
+
+        if(j<end&&tokens[j].type==='op'&&tokens[j].value===')'){
+          j++;
+          break;
+        }
+
+        if(j<end&&tokens[j].type==='name'){
+          params.push(tokens[j].value);
+          j++;
+
+          while(j<end&&(tokens[j].type==='ws'||tokens[j].type==='comment'))j++;
+
+          if(j<end&&tokens[j].type==='op'&&tokens[j].value===','){
+            j++;
+            continue;
+          }
+        }else{
+          j++;
+        }
+      }
+
+      const bodyStart=j;
+      let bodyEnd=-1;
+      let depth=0;
+
+      for(let k=bodyStart;k<end;k++){
+        const x=tokens[k];
+
+        if(x.type==='keyword'){
+          if(x.value==='function'||
+             x.value==='if'||
+             x.value==='for'||
+             x.value==='while'||
+             x.value==='repeat'||
+             x.value==='do'){
+            depth++;
+            continue;
+          }
+
+          if(x.value==='end'){
+            if(depth===0){
+              bodyEnd=k;
+              break;
+            }
+            depth--;
+          }
+        }
+      }
+
+      if(bodyEnd<0){
+        output.push({op:'TOKEN',arg:constant(t.value)});
+        i++;
+        continue;
+      }
+
+      const uid='vm_fn_'+start+'_'+i+'_'+bodyEnd;
+      const bodyLabel=uid+'_body';
+      const endLabel=uid+'_end';
+
+      output.push({op:'MAKEFUNC',arg:bodyLabel});
+      output.push({op:'JMP',arg:endLabel});
+      output.push(vmLabel(bodyLabel));
+
+      for(let n=0;n<params.length;n++){
+        output.push({op:'ARG',arg:n});
+        output.push({op:'STORE',arg:constant(params[n])});
+      }
+
+      let k=bodyStart;
+
+      while(k<bodyEnd){
+        while(k<bodyEnd&&(tokens[k].type==='ws'||tokens[k].type==='comment'))k++;
+        if(k>=bodyEnd)break;
+
+        if(tokens[k].type==='keyword'&&tokens[k].value==='if'){
+          let q=k+1;
+          let depth=0;
+          let ifEnd=-1;
+
+          while(q<bodyEnd){
+            const x=tokens[q];
+
+            if(x.type==='keyword'){
+              if(x.value==='if'||
+                 x.value==='for'||
+                 x.value==='while'||
+                 x.value==='repeat'||
+                 x.value==='do'){
+                depth++;
+              }else if(x.value==='end'){
+                if(depth===0){
+                  ifEnd=q;
+                  break;
+                }
+                depth--;
+              }
+            }
+
+            q++;
+          }
+
+          if(ifEnd<0){
+            throw new Error(
+              'VM invalid if block | k='+k+
+              ' bodyEnd='+bodyEnd+
+              ' scan='+tokens.slice(k,bodyEnd).map(function(t){
+                return t.type+':'+t.value;
+              }).join('|')
+            );
+          }
+
+          const ifCode=compileVMIf(
+            tokens,
+            k,
+            ifEnd+1,
+            constant
+          );
+
+          for(const ins of ifCode)output.push(ins);
+
+          k=ifEnd+1;
+          continue;
+        }
+
+        if(tokens[k].type==='keyword'&&tokens[k].value==='return'){
+          let r=k+1;
+
+          while(r<bodyEnd&&(tokens[r].type==='ws'||tokens[r].type==='comment'))r++;
+
+          if(r<bodyEnd){
+            let rEnd=r;
+            let rDepth=0;
+
+            while(rEnd<bodyEnd){
+              const x=tokens[rEnd];
+
+              if(x.type==='op'){
+                if(x.value==='('||x.value==='{'||x.value==='[')rDepth++;
+                else if(x.value===')'||x.value==='}'||x.value===']'){
+                  if(rDepth>0)rDepth--;
+                }else if(x.value===';'&&rDepth===0){
+                  break;
+                }
+              }
+
+              if(rDepth===0&&x.type==='keyword'&&(x.value==='return'||x.value==='local')){
+                break;
+              }
+
+              rEnd++;
+            }
+
+            let parts=[];
+            let partStart=r;
+            let partDepth=0;
+
+            for(let q=r;q<=rEnd;q++){
+              const x=q<rEnd?tokens[q]:null;
+
+              if(x&&x.type==='op'){
+                if(x.value==='('||x.value==='{'||x.value==='[')partDepth++;
+                else if(x.value===')'||x.value==='}'||x.value===']'){
+                  if(partDepth>0)partDepth--;
+                }else if(x.value===','&&partDepth===0){
+                  parts.push([partStart,q]);
+                  partStart=q+1;
+                }
+              }
+            }
+
+            if(partStart<rEnd)parts.push([partStart,rEnd]);
+
+            for(const pair of parts){
+              const retCode=compileVMExpression(
+                tokens,pair[0],pair[1],constant
+              );
+              for(const ins of retCode)output.push(ins);
+            }
+
+            output.push({op:'RETURN',arg:parts.length});
+            k=rEnd;
+            continue;
+          }
+        }
+
+        if(tokens[k].type==='name'){
+          const name=tokens[k].value;
+          let eq=k+1;
+
+          while(eq<bodyEnd&&(tokens[eq].type==='ws'||tokens[eq].type==='comment'))eq++;
+
+          if(eq<bodyEnd&&tokens[eq].type==='op'&&tokens[eq].value==='='){
+            let v=eq+1;
+
+            while(v<bodyEnd&&(tokens[v].type==='ws'||tokens[v].type==='comment'))v++;
+
+            let vEnd=v;
+            let vDepth=0;
+
+            while(vEnd<bodyEnd){
+              const x=tokens[vEnd];
+
+              if(x.type==='op'){
+                if(x.value==='('||x.value==='{'||x.value==='[')vDepth++;
+                else if(x.value===')'||x.value==='}'||x.value===']'){
+                  if(vDepth>0)vDepth--;
+                }else if(x.value===';'&&vDepth===0){
+                  break;
+                }
+              }
+
+              if(vDepth===0&&x.type==='keyword'&&
+                 (x.value==='return'||
+                  x.value==='local'||
+                  x.value==='if'||
+                  x.value==='for'||
+                  x.value==='while'||
+                  x.value==='do'||
+                  x.value==='repeat')){
+                break;
+              }
+
+              if(vDepth===0&&x.type==='name'){
+                let q=vEnd+1;
+                while(q<bodyEnd&&(tokens[q].type==='ws'||tokens[q].type==='comment'))q++;
+                if(q<bodyEnd&&tokens[q].type==='op'&&tokens[q].value==='='){
+                  break;
+                }
+              }
+
+              vEnd++;
+            }
+
+            const valueCode=compileVMExpression(tokens,v,vEnd,constant);
+            for(const ins of valueCode)output.push(ins);
+            output.push({op:'STORE',arg:constant(name)});
+
+            k=vEnd;
+            continue;
+          }
+        }
+
+        k++;
+      }
+
+      output.push({op:'PUSHK',arg:constant(undefined)});
+      output.push({op:'RETURN'});
+      output.push(vmLabel(endLabel));
+
+      i=bodyEnd+1;
+      continue;
+    }
+
+    if(t.type==='number'){
+      output.push({op:'PUSHK',arg:constant(Number(t.value))});
+      i++;
+      continue;
+    }
+
+    if(t.type==='string'){
+      output.push({op:'PUSHK',arg:constant(parseLuaString(t.value))});
+      i++;
+      continue;
+    }
+
+    if(t.type==='name'){
+      let pos=i;
+
+      output.push({op:'LOAD',arg:constant(t.value)});
+      pos++;
+
+      while(pos<end){
+        while(pos<end&&(tokens[pos].type==='ws'||tokens[pos].type==='comment'))pos++;
+        if(pos>=end)break;
+
+        // .property
+        if(tokens[pos].type==='op'&&tokens[pos].value==='.'){
+          pos++;
+          while(pos<end&&(tokens[pos].type==='ws'||tokens[pos].type==='comment'))pos++;
+
+          if(pos>=end||tokens[pos].type!=='name')break;
+
+          output.push({op:'PUSHK',arg:constant(tokens[pos].value)});
+          output.push({op:'GETTABLE'});
+          pos++;
+          continue;
+        }
+
+        // [key]
+        if(tokens[pos].type==='op'&&tokens[pos].value==='['){
+          let keyStart=pos+1;
+          let j=keyStart;
+          let depth=1;
+
+          while(j<end&&depth>0){
+            if(tokens[j].type==='op'){
+              if(tokens[j].value==='[')depth++;
+              else if(tokens[j].value===']')depth--;
+            }
+            if(depth>0)j++;
+          }
+
+          if(depth!==0)break;
+
+          const keyCode=compileVMExpression(tokens,keyStart,j,constant);
+          for(const ins of keyCode)output.push(ins);
+
+          output.push({op:'GETTABLE'});
+          pos=j+1;
+          continue;
+        }
+
+        // (...) call current value
+        if(tokens[pos].type==='op'&&tokens[pos].value==='('){
+          let j=pos+1;
+          let depth=1;
+          const args=[];
+
+          while(j<end&&depth>0){
+            while(j<end&&(tokens[j].type==='ws'||tokens[j].type==='comment'))j++;
+            if(j>=end)break;
+
+            if(tokens[j].type==='op'&&tokens[j].value==='('){
+              depth++;
+              j++;
+              continue;
+            }
+
+            if(tokens[j].type==='op'&&tokens[j].value===')'){
+              depth--;
+              j++;
+              continue;
+            }
+
+            const argStart=j;
+            let argDepth=0;
+
+            while(j<end){
+              const x=tokens[j];
+
+              if(x.type==='op'){
+                if(x.value==='('||x.value==='{'||x.value==='['){
+                  argDepth++;
+                }else if(x.value===')'||x.value==='}'||x.value===']'){
+                  if(argDepth>0)argDepth--;
+                  else break;
+                }else if(x.value===','&&argDepth===0){
+                  break;
+                }
+              }
+
+              j++;
+            }
+
+            if(j>argStart)args.push([argStart,j]);
+
+            if(j<end&&tokens[j].type==='op'&&tokens[j].value===',')j++;
+          }
+
+          for(const pair of args){
+            const compiled=compileVMExpression(
+              tokens,
+              pair[0],
+              pair[1],
+              constant
+            );
+            for(const ins of compiled)output.push(ins);
+          }
+
+          output.push({op:'CALLVALUE',arg:args.length});
+          pos=j;
+          continue;
+        }
+
+        break;
+      }
+
+      i=pos;
+      continue;
+    }
+
+    if(t.type==='keyword'&&
+       (t.value==='true'||t.value==='false'||t.value==='nil')){
+      output.push({
+        op:'PUSHK',
+        arg:constant(
+          t.value==='true' ? true :
+          t.value==='false' ? false : null
+        )
+      });
+      i++;
+      continue;
+    }
+
+    if(t.type==='op'&&t.value==='('){
+      let depth=1;
+      let j=i+1;
+
+      while(j<end&&depth>0){
+        if(tokens[j].type==='op'){
+          if(tokens[j].value==='(')depth++;
+          else if(tokens[j].value===')')depth--;
+        }
+        if(depth>0)j++;
+      }
+
+      if(depth!==0){
+        output.push({op:'TOKEN',arg:constant(t.value)});
+        i++;
+        continue;
+      }
+
+      const innerCode=compileVMExpression(
+        tokens,
+        i+1,
+        j,
+        constant
+      );
+
+      for(const ins of innerCode)output.push(ins);
+
+      let pos=j+1;
+
+      while(pos<end){
+        while(pos<end&&(tokens[pos].type==='ws'||tokens[pos].type==='comment'))pos++;
+        if(pos>=end)break;
+
+        if(tokens[pos].type==='op'&&tokens[pos].value==='.'){
+          pos++;
+          while(pos<end&&(tokens[pos].type==='ws'||tokens[pos].type==='comment'))pos++;
+
+          if(pos>=end||tokens[pos].type!=='name')break;
+
+          output.push({op:'PUSHK',arg:constant(tokens[pos].value)});
+          output.push({op:'GETTABLE'});
+          pos++;
+          continue;
+        }
+
+        if(tokens[pos].type==='op'&&tokens[pos].value==='['){
+          let keyStart=pos+1;
+          let k=keyStart;
+          let bracketDepth=1;
+
+          while(k<end&&bracketDepth>0){
+            if(tokens[k].type==='op'){
+              if(tokens[k].value==='[')bracketDepth++;
+              else if(tokens[k].value===']')bracketDepth--;
+            }
+            if(bracketDepth>0)k++;
+          }
+
+          if(bracketDepth!==0)break;
+
+          const keyCode=compileVMExpression(
+            tokens,
+            keyStart,
+            k,
+            constant
+          );
+
+          for(const ins of keyCode)output.push(ins);
+          output.push({op:'GETTABLE'});
+
+          pos=k+1;
+          continue;
+        }
+
+        if(tokens[pos].type==='op'&&tokens[pos].value==='('){
+          let k=pos+1;
+          let callDepth=1;
+          const args=[];
+
+          while(k<end&&callDepth>0){
+            while(k<end&&(tokens[k].type==='ws'||tokens[k].type==='comment'))k++;
+            if(k>=end)break;
+
+            if(tokens[k].type==='op'&&tokens[k].value==='('){
+              callDepth++;
+              k++;
+              continue;
+            }
+
+            if(tokens[k].type==='op'&&tokens[k].value===')'){
+              callDepth--;
+              k++;
+              continue;
+            }
+
+            const argStart=k;
+            let argDepth=0;
+
+            while(k<end){
+              const x=tokens[k];
+
+              if(x.type==='op'){
+                if(x.value==='('||x.value==='{'||x.value==='['){
+                  argDepth++;
+                }else if(x.value===')'||x.value==='}'||x.value===']'){
+                  if(argDepth>0)argDepth--;
+                  else break;
+                }else if(x.value===','&&argDepth===0){
+                  break;
+                }
+              }
+
+              k++;
+            }
+
+            if(k>argStart)args.push([argStart,k]);
+
+            if(k<end&&tokens[k].type==='op'&&tokens[k].value===',')k++;
+          }
+
+          for(const pair of args){
+            const compiled=compileVMExpression(
+              tokens,
+              pair[0],
+              pair[1],
+              constant
+            );
+            for(const ins of compiled)output.push(ins);
+          }
+
+          output.push({op:'CALLVALUE',arg:args.length});
+          pos=k;
+          continue;
+        }
+
+        break;
+      }
+
+      i=pos;
+      continue;
+    }
+
+    if(t.type==='op'&&t.value==='('){
+      ops.push('(');
+      i++;
+      continue;
+    }
+
+    if(t.type==='op'&&t.value===')'){
+      while(ops.length&&ops[ops.length-1]!=='('){
+        emitOp(ops.pop());
+      }
+
+      if(ops.length&&ops[ops.length-1]==='(')ops.pop();
+      i++;
+      continue;
+    }
+
+    const op=t.value;
+
+    if((t.type==='op'||t.type==='keyword')&&
+       (op==='-'||op==='not')&&
+       (i===start||(
+         tokens[i-1] &&
+         tokens[i-1].type==='op' &&
+         tokens[i-1].value!==' )'
+       ))){
+      ops.push(op);
+      i++;
+      continue;
+    }
+
+    if((t.type==='op'||t.type==='keyword')&&
+       Object.prototype.hasOwnProperty.call(precedence,op)){
+      while(ops.length&&ops[ops.length-1]!=='('){
+        const top=ops[ops.length-1];
+        const pTop=precedence[top];
+        const pCur=precedence[op];
+
+        if(pTop>pCur||
+           (pTop===pCur&&!rightAssociative[op])){
+          emitOp(ops.pop());
+        }else{
+          break;
+        }
+      }
+
+      ops.push(op);
+      i++;
+      continue;
+    }
+
+    i++;
+  }
+
+  while(ops.length){
+    const op=ops.pop();
+    if(op!=='(')emitOp(op);
+  }
+
+  return output;
+}
+
+
+
+function compileVMIf(tokens,start,end,constant){
+  let thenPos=-1;
+  let elsePos=-1;
+  let depth=0;
+
+  for(let i=start;i<end;i++){
+    const t=tokens[i];
+
+    if(t.type==='op'){
+      if(t.value==='(')depth++;
+      else if(t.value===')')depth--;
+    }
+
+    if(depth===0&&t.type==='keyword'&&t.value==='then'){
+      thenPos=i;
+      break;
+    }
+  }
+
+  if(thenPos<0)return null;
+
+  depth=0;
+
+  for(let i=thenPos+1;i<end;i++){
+    const t=tokens[i];
+
+    if(t.type==='op'){
+      if(t.value==='(')depth++;
+      else if(t.value===')')depth--;
+    }
+
+    if(depth===0&&t.type==='keyword'&&t.value==='else'){
+      elsePos=i;
+      break;
+    }
+  }
+
+  const bodyEnd=elsePos>=0?elsePos:end;
+  const endLabel='vm_if_end_'+start+'_'+end;
+  const elseLabel='vm_if_else_'+start+'_'+end;
+
+  function compileBranch(a,b){
+    const out=[];
+    let i=a;
+
+    while(i<b){
+      while(i<b&&(tokens[i].type==='ws'||tokens[i].type==='comment'))i++;
+      if(i>=b)break;
+
+      let local=false;
+      if(tokens[i].type==='keyword'&&tokens[i].value==='local'){
+        local=true;
+        i++;
+        while(i<b&&(tokens[i].type==='ws'||tokens[i].type==='comment'))i++;
+      }
+
+      if(i<b&&tokens[i].type==='name'){
+        const name=tokens[i].value;
+        let j=i+1;
+
+        while(j<b&&(tokens[j].type==='ws'||tokens[j].type==='comment'))j++;
+
+        if(j<b&&tokens[j].type==='op'&&tokens[j].value==='='){
+          j++;
+          while(j<b&&(tokens[j].type==='ws'||tokens[j].type==='comment'))j++;
+
+          let k=j;
+          let d=0;
+
+          while(k<b){
+            const x=tokens[k];
+
+            if(x.type==='op'){
+              if(x.value==='(')d++;
+              else if(x.value===')')d--;
+              else if(x.value===';'&&d===0)break;
+            }
+
+            k++;
+          }
+
+          out.push(...compileVMExpression(tokens,j,k,constant));
+          out.push({op:'STORE',arg:constant(name)});
+          i=k+1;
+          continue;
+        }
+      }
+
+      out.push({op:'TOKEN',arg:constant(tokens[i].value)});
+      i++;
+    }
+
+    return out;
+  }
+
+  const code=[];
+  code.push(...compileVMExpression(tokens,start,thenPos,constant));
+  code.push(vmJumpIfFalse(elsePos>=0?elseLabel:endLabel));
+  code.push(...compileBranch(thenPos+1,bodyEnd));
+
+  if(elsePos>=0){
+    code.push(vmJump(endLabel));
+    code.push(vmLabel(elseLabel));
+    code.push(...compileBranch(elsePos+1,end));
+  }
+
+  code.push(vmLabel(endLabel));
+  return code;
+}
+
+
+function testVMBytecode(){
+  const constants=[];
+  const constantMap=new Map();
+
+  const constant=value=>{
+    const key=typeof value+':'+String(value);
+    if(constantMap.has(key))return constantMap.get(key);
+
+    const id=constants.length;
+    constants.push(value);
+    constantMap.set(key,id);
+    return id;
+  };
+
+  const env={
+    obj:{
+      sub:{
+        value:42,
+        run:function(a,b){
+          return a+b;
+        }
+      }
+    }
+  };
+
+  const valueTokens=[
+    {type:'name',value:'obj'},
+    {type:'op',value:'.'},
+    {type:'name',value:'sub'},
+    {type:'op',value:'.'},
+    {type:'name',value:'value'}
+  ];
+
+  const valueCode=compileVMExpression(
+    valueTokens,
+    0,
+    valueTokens.length,
+    constant
+  );
+
+  const valueResult=runVMBytecode(
+    {
+      version:1,
+      constants,
+      code:[...valueCode,{op:'HALT'}]
+    },
+    env
+  );
+
+  if(valueResult!==42){
+    throw new Error(
+      "VM #25 NESTED PROPERTY FAILED: "+String(valueResult)
+    );
+  }
+
+  const callTokens=[
+    {type:'name',value:'obj'},
+    {type:'op',value:'.'},
+    {type:'name',value:'sub'},
+    {type:'op',value:'.'},
+    {type:'name',value:'run'},
+    {type:'op',value:'('},
+    {type:'number',value:'19'},
+    {type:'op',value:','},
+    {type:'ws',value:' '},
+    {type:'number',value:'23'},
+    {type:'op',value:')'}
+  ];
+
+  const callCode=compileVMExpression(
+    callTokens,
+    0,
+    callTokens.length,
+    constant
+  );
+
+  const callResult=runVMBytecode(
+    {
+      version:1,
+      constants,
+      code:[...callCode,{op:'HALT'}]
+    },
+    env
+  );
+
+  if(callResult!==42){
+    throw new Error(
+      "VM #25 NESTED METHOD CALL FAILED: "+String(callResult)
+    );
+  }
+
+  const bracketValueTokens=[
+    {type:'name',value:'obj'},
+    {type:'op',value:'['},
+    {type:'string',value:'sub'},
+    {type:'op',value:']'},
+    {type:'op',value:'['},
+    {type:'string',value:'value'},
+    {type:'op',value:']'}
+  ];
+
+  const bracketValueCode=compileVMExpression(
+    bracketValueTokens,
+    0,
+    bracketValueTokens.length,
+    constant
+  );
+
+  const bracketValueResult=runVMBytecode(
+    {
+      version:1,
+      constants,
+      code:[...bracketValueCode,{op:'HALT'}]
+    },
+    env
+  );
+
+  if(bracketValueResult!==42){
+    throw new Error(
+      "VM #26 NESTED BRACKET ACCESS FAILED: "+String(bracketValueResult)
+    );
+  }
+
+  const bracketCallTokens=[
+    {type:'name',value:'obj'},
+    {type:'op',value:'['},
+    {type:'string',value:'sub'},
+    {type:'op',value:']'},
+    {type:'op',value:'.'},
+    {type:'name',value:'run'},
+    {type:'op',value:'('},
+    {type:'number',value:'19'},
+    {type:'op',value:','},
+    {type:'ws',value:' '},
+    {type:'number',value:'23'},
+    {type:'op',value:')'}
+  ];
+
+  const bracketCallCode=compileVMExpression(
+    bracketCallTokens,
+    0,
+    bracketCallTokens.length,
+    constant
+  );
+
+  const bracketCallResult=runVMBytecode(
+    {
+      version:1,
+      constants,
+      code:[...bracketCallCode,{op:'HALT'}]
+    },
+    env
+  );
+
+  if(bracketCallResult!==42){
+    throw new Error(
+      "VM #26 BRACKET PROPERTY METHOD CALL FAILED: "+String(bracketCallResult)
+    );
+  }
+
+  const mixed1Tokens=[
+    {type:'name',value:'obj'},
+    {type:'op',value:'.'},
+    {type:'name',value:'sub'},
+    {type:'op',value:'['},
+    {type:'string',value:'value'},
+    {type:'op',value:']'}
+  ];
+
+  const mixed1Code=compileVMExpression(
+    mixed1Tokens,0,mixed1Tokens.length,constant
+  );
+
+  const mixed1Result=runVMBytecode(
+    {version:1,constants,code:[...mixed1Code,{op:'HALT'}]},
+    env
+  );
+
+  if(mixed1Result!==42){
+    throw new Error("VM #27 MIXED DOT-BRACKET ACCESS FAILED: "+String(mixed1Result));
+  }
+
+  const mixed2Tokens=[
+    {type:'name',value:'obj'},
+    {type:'op',value:'['},
+    {type:'string',value:'sub'},
+    {type:'op',value:']'},
+    {type:'op',value:'.'},
+    {type:'name',value:'value'}
+  ];
+
+  const mixed2Code=compileVMExpression(
+    mixed2Tokens,0,mixed2Tokens.length,constant
+  );
+
+  const mixed2Result=runVMBytecode(
+    {version:1,constants,code:[...mixed2Code,{op:'HALT'}]},
+    env
+  );
+
+  if(mixed2Result!==42){
+    throw new Error("VM #27 BRACKET-DOT ACCESS FAILED: "+String(mixed2Result));
+  }
+
+  const mixed3Tokens=[
+    {type:'name',value:'obj'},
+    {type:'op',value:'['},
+    {type:'string',value:'sub'},
+    {type:'op',value:']'},
+    {type:'op',value:'['},
+    {type:'string',value:'run'},
+    {type:'op',value:']'},
+    {type:'op',value:'('},
+    {type:'number',value:'19'},
+    {type:'op',value:','},
+    {type:'ws',value:' '},
+    {type:'number',value:'23'},
+    {type:'op',value:')'}
+  ];
+
+  const mixed3Code=compileVMExpression(
+    mixed3Tokens,0,mixed3Tokens.length,constant
+  );
+
+  const mixed3Result=runVMBytecode(
+    {version:1,constants,code:[...mixed3Code,{op:'HALT'}]},
+    env
+  );
+
+  if(mixed3Result!==42){
+    throw new Error("VM #27 NESTED BRACKET CALL FAILED: "+String(mixed3Result));
+  }
+
+  const mixed4Tokens=[
+    {type:'name',value:'obj'},
+    {type:'op',value:'.'},
+    {type:'name',value:'sub'},
+    {type:'op',value:'['},
+    {type:'string',value:'run'},
+    {type:'op',value:']'},
+    {type:'op',value:'('},
+    {type:'number',value:'19'},
+    {type:'op',value:','},
+    {type:'ws',value:' '},
+    {type:'number',value:'23'},
+    {type:'op',value:')'}
+  ];
+
+  const mixed4Code=compileVMExpression(
+    mixed4Tokens,0,mixed4Tokens.length,constant
+  );
+
+  const mixed4Result=runVMBytecode(
+    {version:1,constants,code:[...mixed4Code,{op:'HALT'}]},
+    env
+  );
+
+  if(mixed4Result!==42){
+    throw new Error("VM #27 DOT-BRACKET METHOD CALL FAILED: "+String(mixed4Result));
+  }
+
+  env.obj.getSub=function(){
+    return {
+      value:42,
+      run:function(a,b){
+        return a+b;
+      }
+    };
+  };
+
+  const callResultValueTokens=[
+    {type:'name',value:'obj'},
+    {type:'op',value:'.'},
+    {type:'name',value:'getSub'},
+    {type:'op',value:'('},
+    {type:'op',value:')'},
+    {type:'op',value:'.'},
+    {type:'name',value:'value'}
+  ];
+
+  const callResultValueCode=compileVMExpression(
+    callResultValueTokens,
+    0,
+    callResultValueTokens.length,
+    constant
+  );
+
+  const callResultValue=runVMBytecode(
+    {
+      version:1,
+      constants,
+      code:[...callResultValueCode,{op:'HALT'}]
+    },
+    env
+  );
+
+  if(callResultValue!==42){
+    throw new Error(
+      "VM #28 CALL-RESULT PROPERTY ACCESS FAILED: "+String(callResultValue)
+    );
+  }
+
+  const callResultBracketTokens=[
+    {type:'name',value:'obj'},
+    {type:'op',value:'.'},
+    {type:'name',value:'getSub'},
+    {type:'op',value:'('},
+    {type:'op',value:')'},
+    {type:'op',value:'['},
+    {type:'string',value:'value'},
+    {type:'op',value:']'}
+  ];
+
+  const callResultBracketCode=compileVMExpression(
+    callResultBracketTokens,
+    0,
+    callResultBracketTokens.length,
+    constant
+  );
+
+  const callResultBracket=runVMBytecode(
+    {
+      version:1,
+      constants,
+      code:[...callResultBracketCode,{op:'HALT'}]
+    },
+    env
+  );
+
+  if(callResultBracket!==42){
+    throw new Error(
+      "VM #28 CALL-RESULT BRACKET ACCESS FAILED: "+String(callResultBracket)
+    );
+  }
+
+  const callResultMethodTokens=[
+    {type:'name',value:'obj'},
+    {type:'op',value:'.'},
+    {type:'name',value:'getSub'},
+    {type:'op',value:'('},
+    {type:'op',value:')'},
+    {type:'op',value:'.'},
+    {type:'name',value:'run'},
+    {type:'op',value:'('},
+    {type:'number',value:'19'},
+    {type:'op',value:','},
+    {type:'ws',value:' '},
+    {type:'number',value:'23'},
+    {type:'op',value:')'}
+  ];
+
+  const callResultMethodCode=compileVMExpression(
+    callResultMethodTokens,
+    0,
+    callResultMethodTokens.length,
+    constant
+  );
+
+  const callResultMethod=runVMBytecode(
+    {
+      version:1,
+      constants,
+      code:[...callResultMethodCode,{op:'HALT'}]
+    },
+    env
+  );
+
+  if(callResultMethod!==42){
+    throw new Error(
+      "VM #28 CALL-RESULT METHOD CALL FAILED: "+String(callResultMethod)
+    );
+  }
+
+  env.obj.getSub=function(a,b){
+    return {
+      value:a+b,
+      run:function(x,y){
+        return x+y;
+      }
+    };
+  };
+
+  env.obj.factory=function(n){
+    return {
+      value:n,
+      run:function(x,y){
+        return x+y;
+      }
+    };
+  };
+
+  const chainedCallTokens=[
+    {type:'name',value:'obj'},
+    {type:'op',value:'.'},
+    {type:'name',value:'getSub'},
+    {type:'op',value:'('},
+    {type:'number',value:'1'},
+    {type:'op',value:','},
+    {type:'ws',value:' '},
+    {type:'number',value:'2'},
+    {type:'op',value:')'},
+    {type:'op',value:'.'},
+    {type:'name',value:'run'},
+    {type:'op',value:'('},
+    {type:'number',value:'19'},
+    {type:'op',value:','},
+    {type:'ws',value:' '},
+    {type:'number',value:'23'},
+    {type:'op',value:')'}
+  ];
+
+  const chainedCallCode=compileVMExpression(
+    chainedCallTokens,
+    0,
+    chainedCallTokens.length,
+    constant
+  );
+
+  const chainedCallResult=runVMBytecode(
+    {
+      version:1,
+      constants,
+      code:[...chainedCallCode,{op:'HALT'}]
+    },
+    env
+  );
+
+  if(chainedCallResult!==42){
+    throw new Error(
+      "VM #29 CHAINED CALL WITH ARGUMENTS FAILED: "+String(chainedCallResult)
+    );
+  }
+
+  const factoryCallTokens=[
+    {type:'name',value:'obj'},
+    {type:'op',value:'.'},
+    {type:'name',value:'factory'},
+    {type:'op',value:'('},
+    {type:'number',value:'5'},
+    {type:'op',value:')'},
+    {type:'op',value:'['},
+    {type:'string',value:'run'},
+    {type:'op',value:']'},
+    {type:'op',value:'('},
+    {type:'number',value:'19'},
+    {type:'op',value:','},
+    {type:'ws',value:' '},
+    {type:'number',value:'23'},
+    {type:'op',value:')'}
+  ];
+
+  const factoryCallCode=compileVMExpression(
+    factoryCallTokens,
+    0,
+    factoryCallTokens.length,
+    constant
+  );
+
+  const factoryCallResult=runVMBytecode(
+    {
+      version:1,
+      constants,
+      code:[...factoryCallCode,{op:'HALT'}]
+    },
+    env
+  );
+
+  if(factoryCallResult!==42){
+    throw new Error(
+      "VM #29 FACTORY BRACKET CALL FAILED: "+String(factoryCallResult)
+    );
+  }
+
+  const groupedPropertyTokens=[
+    {type:'op',value:'('},
+    {type:'name',value:'obj'},
+    {type:'op',value:'.'},
+    {type:'name',value:'sub'},
+    {type:'op',value:')'},
+    {type:'op',value:'.'},
+    {type:'name',value:'value'}
+  ];
+
+  const groupedPropertyCode=compileVMExpression(
+    groupedPropertyTokens,
+    0,
+    groupedPropertyTokens.length,
+    constant
+  );
+
+  const groupedPropertyResult=runVMBytecode(
+    {
+      version:1,
+      constants,
+      code:[...groupedPropertyCode,{op:'HALT'}]
+    },
+    env
+  );
+
+  if(groupedPropertyResult!==42){
+    throw new Error(
+      "VM #30 GROUPED PROPERTY ACCESS FAILED: "+String(groupedPropertyResult)
+    );
+  }
+
+  const groupedCallTokens=[
+    {type:'op',value:'('},
+    {type:'name',value:'obj'},
+    {type:'op',value:'.'},
+    {type:'name',value:'getSub'},
+    {type:'op',value:'('},
+    {type:'number',value:'1'},
+    {type:'op',value:','},
+    {type:'ws',value:' '},
+    {type:'number',value:'2'},
+    {type:'op',value:')'},
+    {type:'op',value:')'},
+    {type:'op',value:'.'},
+    {type:'name',value:'run'},
+    {type:'op',value:'('},
+    {type:'number',value:'19'},
+    {type:'op',value:','},
+    {type:'ws',value:' '},
+    {type:'number',value:'23'},
+    {type:'op',value:')'}
+  ];
+
+  const groupedCallCode=compileVMExpression(
+    groupedCallTokens,
+    0,
+    groupedCallTokens.length,
+    constant
+  );
+
+  const groupedCallResult=runVMBytecode(
+    {
+      version:1,
+      constants,
+      code:[...groupedCallCode,{op:'HALT'}]
+    },
+    env
+  );
+
+  if(groupedCallResult!==42){
+    throw new Error(
+      "VM #30 GROUPED CALL CHAIN FAILED: "+String(groupedCallResult)
+    );
+  }
+
+  const fnTokens=[
+    {type:'keyword',value:'function'},
+    {type:'op',value:'('},
+    {type:'name',value:'a'},
+    {type:'op',value:','},
+    {type:'ws',value:' '},
+    {type:'name',value:'b'},
+    {type:'op',value:')'},
+    {type:'keyword',value:'return'},
+    {type:'ws',value:' '},
+    {type:'name',value:'a'},
+    {type:'op',value:'+'},
+    {type:'name',value:'b'},
+    {type:'keyword',value:'end'}
+  ];
+
+  const fnCode=compileVMExpression(
+    fnTokens,
+    0,
+    fnTokens.length,
+    constant
+  );
+
+  const fnVM={
+    version:1,
+    constants,
+    code:assembleVM([
+      ...fnCode,
+      {op:'HALT'}
+    ])
+  };
+
+  const fnEnv={};
+  const fnResult=runVMBytecode(fnVM,fnEnv);
+
+  if(!fnResult||fnResult.__vmFunction!==true){
+    throw new Error(
+      "VM #31 ANONYMOUS FUNCTION CREATION FAILED"
+    );
+  }
+
+  const fnCallCode=assembleVM([
+    ...fnCode,
+    {op:'PUSHK',arg:constant(19)},
+    {op:'PUSHK',arg:constant(23)},
+    {op:'CALLFUNC',arg:2},
+    {op:'HALT'}
+  ]);
+
+  const fnCallResult=runVMBytecode(
+    {
+      version:1,
+      constants,
+      code:fnCallCode
+    },
+    {}
+  );
+
+  if(fnCallResult!==42){
+    throw new Error(
+      "VM #31 ANONYMOUS FUNCTION CALL FAILED: "+String(fnCallResult)
+    );
+  }
+
+  const seqTokens=[
+    {type:'keyword',value:'function'},
+    {type:'op',value:'('},
+    {type:'name',value:'a'},
+    {type:'op',value:','},
+    {type:'name',value:'b'},
+    {type:'op',value:')'},
+    {type:'keyword',value:'local'},
+    {type:'name',value:'x'},
+    {type:'op',value:'='},
+    {type:'name',value:'a'},
+    {type:'op',value:'+'},
+    {type:'name',value:'b'},
+    {type:'keyword',value:'local'},
+    {type:'name',value:'y'},
+    {type:'op',value:'='},
+    {type:'name',value:'x'},
+    {type:'op',value:'*'},
+    {type:'number',value:'2'},
+    {type:'name',value:'y'},
+    {type:'op',value:'='},
+    {type:'name',value:'y'},
+    {type:'op',value:'+'},
+    {type:'number',value:'1'},
+    {type:'keyword',value:'return'},
+    {type:'name',value:'y'},
+    {type:'keyword',value:'end'}
+  ];
+
+  const seqCode=compileVMExpression(seqTokens,0,seqTokens.length,constant);
+  const seqVM={
+    version:1,
+    constants,
+    code:assembleVM([
+      ...seqCode,
+      {op:'PUSHK',arg:constant(19)},
+      {op:'PUSHK',arg:constant(23)},
+      {op:'CALLFUNC',arg:2},
+      {op:'HALT'}
+    ])
+  };
+
+  const seqResult=runVMBytecode(seqVM,{});
+  if(seqResult!==85){
+    throw new Error(
+      "VM #32 STATEMENT SEQUENCING FAILED: "+String(seqResult)
+    );
+  }
+
+  const multiTokens=[
+    {type:'keyword',value:'function'},
+    {type:'op',value:'('},
+    {type:'name',value:'a'},
+    {type:'op',value:','},
+    {type:'name',value:'b'},
+    {type:'op',value:')'},
+    {type:'keyword',value:'return'},
+    {type:'name',value:'a'},
+    {type:'op',value:','},
+    {type:'name',value:'b'},
+    {type:'op',value:','},
+    {type:'name',value:'a'},
+    {type:'op',value:'+'},
+    {type:'name',value:'b'},
+    {type:'keyword',value:'end'}
+  ];
+
+  const multiCode=compileVMExpression(
+    multiTokens,0,multiTokens.length,constant
+  );
+
+  const multiVM={
+    version:1,
+    constants,
+    code:assembleVM([
+      ...multiCode,
+      {op:'PUSHK',arg:constant(19)},
+      {op:'PUSHK',arg:constant(23)},
+      {op:'CALLFUNC',arg:2},
+      {op:'HALT'}
+    ])
+  };
+
+  const multiResult=runVMBytecode(multiVM,{});
+
+  if(!multiResult||multiResult.__vmMultiReturn!==true||
+     JSON.stringify(multiResult.values)!==JSON.stringify([19,23,42])){
+    throw new Error(
+      "VM #33 MULTI-VALUE RETURN FAILED: "+
+      JSON.stringify(multiResult)
+    );
+  }
+
+  const flowTokens=[
+    {type:'keyword',value:'function'},
+    {type:'op',value:'('},
+    {type:'name',value:'a'},
+    {type:'op',value:')'},
+    {type:'keyword',value:'local'},
+    {type:'name',value:'x'},
+    {type:'op',value:'='},
+    {type:'number',value:'0'},
+    {type:'keyword',value:'if'},
+    {type:'name',value:'a'},
+    {type:'op',value:'>'},
+    {type:'number',value:'10'},
+    {type:'keyword',value:'then'},
+    {type:'name',value:'x'},
+    {type:'op',value:'='},
+    {type:'number',value:'42'},
+    {type:'keyword',value:'else'},
+    {type:'name',value:'x'},
+    {type:'op',value:'='},
+    {type:'number',value:'7'},
+    {type:'keyword',value:'end'},
+    {type:'keyword',value:'return'},
+    {type:'name',value:'x'},
+    {type:'keyword',value:'end'}
+  ];
+
+  const flowCode=compileVMExpression(
+    flowTokens,0,flowTokens.length,constant
+  );
+
+  const flowVM={
+    version:1,
+    constants,
+    code:assembleVM([
+      ...flowCode,
+      {op:'PUSHK',arg:constant(20)},
+      {op:'CALLFUNC',arg:1},
+      {op:'HALT'}
+    ])
+  };
+
+  const flowResult=runVMBytecode(flowVM,{});
+
+  if(flowResult!==42){
+    throw new Error(
+      "VM #34 IF/ELSE CONTROL FLOW FAILED: "+String(flowResult)
+    );
+  }
+
+  const flowVM2={
+    version:1,
+    constants,
+    code:assembleVM([
+      ...flowCode,
+      {op:'PUSHK',arg:constant(5)},
+      {op:'CALLFUNC',arg:1},
+      {op:'HALT'}
+    ])
+  };
+
+  const flowResult2=runVMBytecode(flowVM2,{});
+
+  if(flowResult2!==7){
+    throw new Error(
+      "VM #34 ELSE CONTROL FLOW FAILED: "+String(flowResult2)
+    );
+  }
+
+  return "VM #34 IF ELSE CONTROL FLOW RUNTIME SELF-TEST PASSED";
+}
+
+function packVMBytecode(vm,key){
+  key=(key||83)&255;
+  const raw=JSON.stringify(vm);
+  let out='';
+  for(let i=0;i<raw.length;i++){
+    const c=raw.charCodeAt(i)&255;
+    out+='\\'+(c^key).toString().padStart(3,'0');
+  }
+  return {key,data:out};
+}
+
+function unpackVMBytecode(packed){
+  const key=packed.key&255;
+  const raw=packed.data.replace(/\\(\d{3})/g,function(_,v){
+    return String.fromCharCode((parseInt(v,10)^key)&255);
+  });
+  return JSON.parse(raw);
+}
+
+function runVMBytecode(vm,env){
+  const stack=[];
+  const globals=env||{};
+  const callStack=[];
+  const frames=[];
+  let pc=0;
+
+  while(pc<vm.code.length){
+    const ins=vm.code[pc++];
+
+    switch(ins.op){
+      case 'PUSHK':
+        stack.push(vm.constants[ins.arg]);
+        break;
+
+      case 'LOAD':
+        stack.push(globals[vm.constants[ins.arg]]);
+        break;
+
+      case 'STORE':
+        globals[vm.constants[ins.arg]]=stack.pop();
+        break;
+
+      case 'JMP':
+        pc=ins.arg;
+        break;
+
+      case 'JZ':
+        if(!stack.pop())pc=ins.arg;
+        break;
+
+      case 'JNZ':
+        if(stack.pop())pc=ins.arg;
+        break;
+
+      case 'CALL': {
+        const target=typeof ins.arg==='object'?ins.arg.target:ins.arg;
+        const argc=typeof ins.arg==='object'?(ins.arg.args||0):0;
+        const args=argc>0?stack.splice(stack.length-argc,argc):[];
+        callStack.push(pc);
+        frames.push({args});
+        pc=target;
+        break;
+      }
+
+      case 'ARG': {
+        const frame=frames[frames.length-1];
+        stack.push(frame&&frame.args?frame.args[ins.arg]:undefined);
+        break;
+      }
+
+      case 'MAKEFUNC':
+        stack.push({__vmFunction:true,target:ins.arg});
+        break;
+
+      case 'NEWTABLE':
+        stack.push({});
+        break;
+
+      case 'TABLESET':
+        {
+          const value=stack.pop();
+          const index=ins.arg;
+          const obj=stack[stack.length-1];
+          if(obj==null)throw new Error('VM TABLESET on nil');
+          obj[index]=value;
+        }
+        break;
+
+      case 'FOR_INIT': {
+        const step=ins.step===undefined?1:ins.step;
+        const limit=stack.pop();
+        const start=stack.pop();
+        stack.push({current:start,limit,step});
+        break;
+      }
+
+      case 'FOR_CHECK': {
+        const loop=stack[stack.length-1];
+        if(!loop)throw new Error('VM FOR_CHECK without loop state');
+        const ok=loop.step>=0?loop.current<=loop.limit:loop.current>=loop.limit;
+        stack.push(ok);
+        break;
+      }
+
+      case 'FOR_STEP': {
+        const loop=stack[stack.length-1];
+        if(!loop)throw new Error('VM FOR_STEP without loop state');
+        loop.current+=loop.step;
+        break;
+      }
+
+      case 'FOR_VALUE': {
+        const loop=stack[stack.length-1];
+        if(!loop)throw new Error('VM FOR_VALUE without loop state');
+        stack.push(loop.current);
+        break;
+      }
+
+      case 'FOR_POP':
+        stack.pop();
+        break;
+
+      case 'BREAK':
+        pc=ins.arg;
+        break;
+
+      case 'GETTABLE': {
+        const key=stack.pop();
+        const obj=stack.pop();
+        stack.push(obj==null?undefined:obj[key]);
+        break;
+      }
+
+      case 'SETTABLE': {
+        const value=stack.pop();
+        const key=stack.pop();
+        const obj=stack.pop();
+        if(obj==null)throw new Error('VM SETTABLE on nil');
+        obj[key]=value;
+        stack.push(obj);
+        break;
+      }
+
+      case 'CALLFUNC': {
+        const argc=ins.arg||0;
+        const args=argc>0?stack.splice(stack.length-argc,argc):[];
+        const fn=stack.pop();
+
+        if(!fn||fn.__vmFunction!==true){
+          throw new Error('VM invalid function value');
+        }
+
+        callStack.push(pc);
+        frames.push({args});
+        pc=fn.target;
+        break;
+      }
+
+      case 'CALLVALUE': {
+        const argc=ins.arg||0;
+        const args=argc>0?stack.splice(stack.length-argc,argc):[];
+        const fn=stack.pop();
+
+        if(typeof fn!=='function'){
+          throw new Error('VM invalid value call');
+        }
+
+        const result=fn.apply(null,args);
+
+        if(Array.isArray(result)){
+          for(let i=0;i<result.length;i++)stack.push(result[i]);
+        }else{
+          stack.push(result);
+        }
+        break;
+      }
+
+      case 'CALLHOST': {
+        const argc=ins.arg||0;
+        const args=argc>0?stack.splice(stack.length-argc,argc):[];
+        const fn=stack.pop();
+        if(typeof fn!=='function'){
+          throw new Error('VM invalid host call');
+        }
+        const result=fn.apply(null,args);
+        if(Array.isArray(result)){
+          for(let i=0;i<result.length;i++)stack.push(result[i]);
+        }else{
+          stack.push(result);
+        }
+        break;
+      }
+
+      case 'RETURN': {
+        const argc=ins.arg==null?1:ins.arg;
+        const values=argc>0?stack.splice(stack.length-argc,argc):[];
+
+        if(!callStack.length){
+          if(argc<=1)return values.length?values[0]:undefined;
+          return {__vmMultiReturn:true,values};
+        }
+
+        pc=callStack.pop();
+        frames.pop();
+
+        if(argc<=1){
+          if(values.length)stack.push(values[0]);
+        }else{
+          stack.push({__vmMultiReturn:true,values});
+        }
+
+        break;
+      }
+
+      case 'TOKEN':
+        stack.push(vm.constants[ins.arg]);
+        break;
+
+      case 'UNARY': {
+        const op=vm.constants[ins.arg];
+        const a=stack.pop();
+
+        if(op==='not'){
+          stack.push(!a);
+        }else if(op==='-'){
+          stack.push(-a);
+        }else{
+          throw new Error('VM unknown unary operator: '+String(op));
+        }
+        break;
+      }
+
+      case 'LOGIC': {
+        const op=vm.constants[ins.arg];
+        const b=stack.pop();
+        const a=stack.pop();
+
+        if(op==='and'){
+          stack.push(a && b);
+        }else if(op==='or'){
+          stack.push(a || b);
+        }else{
+          throw new Error('VM unknown logic operator: '+String(op));
+        }
+        break;
+      }
+
+      case 'BIN': {
+        const b=stack.pop();
+        const a=stack.pop();
+        const op=vm.constants[ins.arg];
+        let r;
+        if(op==='+')r=a+b;
+        else if(op==='-')r=a-b;
+        else if(op==='*')r=a*b;
+        else if(op==='/')r=a/b;
+        else if(op==='%')r=a%b;
+        else if(op==='^')r=a**b;
+        else if(op==='..')r=String(a)+String(b);
+        else if(op==='==')r=a===b;
+        else if(op==='~=')r=a!==b;
+        else if(op==='<')r=a<b;
+        else if(op==='>')r=a>b;
+        else if(op==='<=')r=a<=b;
+        else if(op==='>=')r=a>=b;
+        else throw new Error('VM invalid binary operator');
+        stack.push(r);
+        break;
+      }
+
+      case 'POP':
+        stack.pop();
+        break;
+
+      case 'HALT':
+        return stack.length?stack[stack.length-1]:undefined;
+
+      default:
+        throw new Error('VM unknown opcode: '+String(ins.op));
+    }
+  }
+
+  return stack.length?stack[stack.length-1]:undefined;
+}
+
+
+function assembleVM(instructions){
+  const labels=new Map();
+  const code=[];
+  for(const ins of instructions){
+    if(ins.op==='LABEL'){
+      labels.set(ins.arg,code.length);
+    }else{
+      code.push({...ins});
+    }
+  }
+
+  for(const ins of code){
+    if(typeof ins.arg==='string'&&labels.has(ins.arg)){
+      ins.arg=labels.get(ins.arg);
+    }
+  }
+
+  return code;
+}
+
+function encodeVMBytecode(vm){
+  const raw=JSON.stringify(vm);
+  let out='';
+  for(let i=0;i<raw.length;i++){
+    out+='\\'+raw.charCodeAt(i).toString().padStart(3,'0');
+  }
+  return out;
+}
+
+function luaVMQuote(value){
+  if(value===null)return 'nil';
+  if(value===true)return 'true';
+  if(value===false)return 'false';
+  if(typeof value==='number'){
+    if(!Number.isFinite(value))return '0';
+    return String(value);
+  }
+  if(typeof value==='string'){
+    return '"' + value
+      .replace(/\\/g,'\\\\')
+      .replace(/"/g,'\\"')
+      .replace(/\r/g,'\\r')
+      .replace(/\n/g,'\\n')
+      .replace(/\t/g,'\\t')
+      .replace(/\0/g,'\\0') + '"';
+  }
+  if(typeof value==='undefined')return 'nil';
+  return 'nil';
+}
+
+function serializeVMForLua(vm){
+  const constants=(vm.constants||[]).map(luaVMQuote).join(',');
+  const code=(vm.code||[]).map(function(ins){
+    const op=luaVMQuote(ins.op);
+    const arg=ins.arg===undefined?'nil':luaVMQuote(ins.arg);
+    return '{op='+op+',arg='+arg+'}';
+  }).join(',');
+
+  return '{version='+(Number(vm.version)||1)+
+         ',constants={'+constants+'},code={'+code+'}}';
+}
+
+
+function buildLuaVMRuntime(vm){
+  const payload=serializeVMForLua(vm);
+
+  return `
+local __VM=${payload}
+
+local function __vm_run(__env)
+  local __code=__VM.code
+  local __const=__VM.constants
+  local __stack={}
+  local __locals=__env or {}                            local __args={}
+  local __pc=1
+
+  local function __push(v)
+    __stack[#__stack+1]=v
+  end
+
+  local function __pop()
+    local n=#__stack
+    local v=__stack[n]
+    __stack[n]=nil
+    return v
+  end
+
+  local function __truthy(v)
+    return v~=nil and v~=false
+  end
+
+  while true do
+    local __ins=__code[__pc]
+    if not __ins then
+      return
+    end
+
+    local __op=__ins.op
+    local __arg=__ins.arg
+
+    if __op=="PUSHK" then
+      __push(__const[__arg+1])
+
+    elseif __op=="LOAD" then
+      local __name=__const[__arg+1]
+      local __value=__locals[__name]
+      if __value==nil then
+        __value=_G[__name]
+      end
+      __push(__value)
+
+    elseif __op=="STORE" then
+      local __name=__const[__arg+1]
+      __locals[__name]=__pop()
+
+    elseif __op=="JMP" then
+      __pc=__arg
+
+    elseif __op=="JZ" then
+      local __v=__pop()
+      if not __truthy(__v) then
+        __pc=__arg
+      end
+
+    elseif __op=="JNZ" then
+      local __v=__pop()
+      if __truthy(__v) then
+        __pc=__arg
+      end
+
+    elseif __op=="CALLVALUE" then
+      local __argc=__arg or 0
+      local __callArgs={}
+      for __i=__argc,1,-1 do
+        __callArgs[__i]=__pop()
+      end
+      local __fn=__pop()
+      if type(__fn)~="function" then
+        error("NullFuscator VM: invalid value call")
+      end
+      local __ok,__result=pcall(function()
+        return __fn(table.unpack(__callArgs))
+      end)
+      if not __ok then
+        error(__result)
+      end
+      __push(__result)
+
+    elseif __op=="CALL" then
+      local __argc=__arg or 0
+      local __callArgs={}
+      for __i=__argc,1,-1 do
+        __callArgs[__i]=__pop()
+      end
+      local __fn=__pop()
+      if type(__fn)~="function" then
+        error("NullFuscator VM: attempted to call non-function")
+      end
+      __args[#__args+1]=__callArgs
+      local __ok,__result=pcall(function()
+        return __fn(table.unpack(__callArgs))
+      end)
+      __args[#__args]=nil
+      if not __ok then
+        error(__result)
+      end
+      __push(__result)
+
+    elseif __op=="ARG" then
+      local __frame=__args[#__args]
+      __push(__frame and __frame[__arg] or nil)
+
+    elseif __op=="UNARY" then
+      local __operator=__const[__arg+1]
+      local __v=__pop()
+      if __operator=="not" then
+        __push(not __truthy(__v))
+      elseif __operator=="-" then
+        __push(-__v)
+      else
+        error("NullFuscator VM: unsupported unary operator")
+      end
+
+    elseif __op=="LOGIC" then
+      local __operator=__const[__arg+1]
+      local __b=__pop()
+      local __a=__pop()
+      if __operator=="and" then
+        if __truthy(__a) then __push(__b) else __push(__a) end
+      elseif __operator=="or" then
+        if __truthy(__a) then __push(__a) else __push(__b) end
+      else
+        error("NullFuscator VM: unsupported logic operator")
+      end
+
+    elseif __op=="BIN" then
+      local __operator=__const[__arg+1]
+      local __b=__pop()
+      local __a=__pop()
+
+      if __operator=="+" then __push(__a+__b)
+      elseif __operator=="-" then __push(__a-__b)
+      elseif __operator=="*" then __push(__a*__b)
+      elseif __operator=="/" then __push(__a/__b)
+      elseif __operator=="%" then __push(__a%__b)
+      elseif __operator=="^" then __push(__a^__b)
+      elseif __operator==".." then __push(__a..__b)
+      elseif __operator=="==" then __push(__a==__b)
+      elseif __operator=="~=" then __push(__a~=__b)
+      elseif __operator=="<" then __push(__a<__b)
+      elseif __operator==">" then __push(__a>__b)
+      elseif __operator=="<=" then __push(__a<=__b)
+      elseif __operator==">=" then __push(__a>=__b)
+      else
+        error("NullFuscator VM: unsupported binary operator")
+      end
+
+    elseif __op=="GETTABLE" then
+      local __key=__pop()
+      local __obj=__pop()
+      if __obj==nil then
+        __push(nil)
+      else
+        __push(__obj[__key])
+      end
+
+    elseif __op=="POP" then
+      __pop()
+
+    elseif __op=="RETURN" then
+      return __pop()
+
+    elseif __op=="HALT" then
+      return
+
+    else
+      error("NullFuscator VM: unsupported opcode "..tostring(__op))
+    end
+
+    __pc=__pc+1
+  end
+end
+
+return __vm_run()
+`;
+}
+
 function obfuscateLua(src,opts){
   opts=opts||{};
   const seed=opts.seed||Date.now();
@@ -366,6 +2704,7 @@ function obfuscateLua(src,opts){
   const dName=freshName();
   const tamperFlag=freshName();
   const strTableName=freshName();
+  const strGetName=freshName();
 
   const renameMap=new Map();
   if(opts.rename!==false){
@@ -381,27 +2720,45 @@ function obfuscateLua(src,opts){
   const out=[];
   for(let i=0;i<tokens.length;i++){
     const t=tokens[i];
-    if(t.type==='op'){if(t.value==='{')braceDepth++;else if(t.value==='}')braceDepth--;out.push(t);continue;}
+    if(t.type==='op'){
+      if(t.value==='{')braceDepth++;
+      else if(t.value==='}')braceDepth--;
+      out.push(t);
+      continue;
+    }
     if(t.type==='string'){
       const decoded=parseLuaString(t.value);
       if(opts.stringArray){
-        stringTable.push(encodeString(decoded,dName));
-        out.push({type:'raw',value:strTableName+'['+stringTable.length+']'});
-      }else if(opts.chunkStrings){
-        out.push({type:'raw',value:encodeStringChunked(decoded,dName)});
+        stringTable.push(opts.chunkStrings?encodeStringChunked(decoded,dName):encodeString(decoded,dName));
+        out.push({type:'raw',value:strGetName+'('+stringTable.length+')'});
       }else{
-        out.push({type:'raw',value:encodeString(decoded,dName)});
+        out.push({type:'raw',value:opts.chunkStrings?encodeStringChunked(decoded,dName):encodeString(decoded,dName)});
       }
       continue;
     }
-    if(t.type==='number'){out.push({type:'raw',value:encodeNumber(t.value,opts.numExpr),numeric:true});continue;}
+    if(t.type==='number'){
+      out.push({type:'raw',value:encodeNumber(t.value,!!opts.numExpr),numeric:true});
+      continue;
+    }
     if(t.type==='name'){
       const prev=out.length?out[out.length-1]:null;
-      if(prev&&prev.type==='op'&&(prev.value==='.'||prev.value===':'||prev.value==='::')){out.push(t);continue;}
-      if(prev&&prev.type==='keyword'&&prev.value==='goto'){out.push(t);continue;}
+      if(prev&&prev.type==='op'&&(prev.value==='.'||prev.value===':'||prev.value==='::')){
+        out.push(t);
+        continue;
+      }
+      if(prev&&prev.type==='keyword'&&prev.value==='goto'){
+        out.push(t);
+        continue;
+      }
       const nx0=tokens[i+1];
-      if(nx0&&nx0.type==='op'&&nx0.value==='::'){out.push(t);continue;}
-      if(braceDepth>0&&nx0&&nx0.type==='op'&&nx0.value==='='){out.push(t);continue;}
+      if(nx0&&nx0.type==='op'&&nx0.value==='::'){
+        out.push(t);
+        continue;
+      }
+      if(braceDepth>0&&nx0&&nx0.type==='op'&&nx0.value==='='){
+        out.push(t);
+        continue;
+      }
       if(renameMap.has(t.value))out.push({type:'raw',value:renameMap.get(t.value)});
       else out.push(t);
       continue;
@@ -411,20 +2768,38 @@ function obfuscateLua(src,opts){
 
   let finalTokens=out;
   if(opts.deadCode&&opts.deadCode>0){
-    finalTokens=injectDeadCode(out,rng,opts.deadCode);
+    finalTokens=injectDeadCode(out,rng,opts.deadCode,opts.opaquePredicates||0);
   }
 
   let pre='';
   if(stringTable.length>0){
-    pre='local '+strTableName+'={'+stringTable.join(',')+'}\n';
+    if(opts.stringArray){
+      const order=stringTable.map((_,i)=>i);
+      for(let i=order.length-1;i>0;i--){
+        const j=Math.floor(rng()*(i+1));
+        const tmp=order[i];
+        order[i]=order[j];
+        order[j]=tmp;
+      }
+      const shuffled=order.map(i=>stringTable[i]);
+      const indexMap=[];
+      for(let i=0;i<order.length;i++)indexMap[order[i]]=i+1;
+      const mapKey=1+Math.floor(rng()*255);
+      const encodedMap=indexMap.map(v=>bxName+'('+v+','+mapKey+')');
+      pre='local '+strTableName+'={'+shuffled.join(',')+'}\n';
+      pre+='local '+strGetName+'Map={'+encodedMap.join(',')+'}\n';
+      pre+='local '+strGetName+'=function(i) return '+strTableName+'['+bxName+'('+strGetName+'Map[i],'+mapKey+')] end\n';
+    }else{
+      pre='local '+strTableName+'={'+stringTable.join(',')+'}\n';
+    }
   }
 
   const body=generate(finalTokens);
   const antiTamper=opts.antiTamper?buildAntiTamper(tamperFlag):'';
   const header=buildHeader(bxName,dName);
-  return BANNER+header+pre+antiTamper+body;
+  const watermark='--[[ NullFuscator-WM:'+Math.random().toString(36).slice(2,10)+' ]]\n';
+  return BANNER+watermark+header+pre+antiTamper+body;
 }
-
 function generate(tokens){
   let out='',prev=null;
   for(const t of tokens){
@@ -437,7 +2812,14 @@ function generate(tokens){
 function needsSpace(a,b){
   const aLast=a.value[a.value.length-1],bFirst=b.value[0];
   const aWord=/[A-Za-z0-9_]/.test(aLast),bWord=/[A-Za-z0-9_]/.test(bFirst);
+
   if(aWord&&bWord)return true;
+
+  // Prevent generated numeric literals from merging with identifiers.
+  // Example: "(0x5)_abc" must remain "(0x5) _abc".
+  if(a.numeric&&/[A-Za-z_]/.test(bFirst))return true;
+  if(b.numeric&&/[A-Za-z_]/.test(aLast))return true;
+
   if(a.value==='-'&&bFirst==='-')return true;
   if(a.value.endsWith('..')&&b.numeric)return true;
   if(a.numeric&&b.value.startsWith('..'))return true;
@@ -455,20 +2837,20 @@ self.onmessage=function(e){
     self.postMessage({ok:false,error:err.message||String(err)});
   }
 };
+
 </script>
 
 <!-- ================== MAIN PAGE SCRIPT ================== -->
 <script>
 /* ---- Mode presets ---- */
 const MODES = {
-  weak:        { label:'Weak',        desc:'Fast, minimal. Good for debugging.',        tag:'fast',  string:true, number:true, rename:true, deadCode:0,    antiTamper:false, numExpr:false, chunkStrings:false, stringArray:false },
-  normal:      { label:'Normal',      desc:'Balanced default.',                        tag:'',      string:true, number:true, rename:true, deadCode:0.15, antiTamper:false, numExpr:false, chunkStrings:false, stringArray:false },
-  strong:      { label:'Strong',      desc:'More bloat, harder to read.',              tag:'',      string:true, number:true, rename:true, deadCode:0.30, antiTamper:false, numExpr:false, chunkStrings:false, stringArray:false },
-  superStrong: { label:'Super Strong',desc:'Chunked strings + heavier bloat.',         tag:'mid',   string:true, number:true, rename:true, deadCode:0.45, antiTamper:false, numExpr:false, chunkStrings:true,  stringArray:false },
-  ultra:       { label:'Ultra',       desc:'Anti-tamper + all of the above.',          tag:'mid',   string:true, number:true, rename:true, deadCode:0.45, antiTamper:true,  numExpr:false, chunkStrings:true,  stringArray:false },
-  extreme:     { label:'Extreme',     desc:'Numeric expressions + heavy bloat.',       tag:'hot',   string:true, number:true, rename:true, deadCode:0.60, antiTamper:true,  numExpr:true,  chunkStrings:true,  stringArray:false },
-  evil:        { label:'Evil',        desc:'Maximum protection. Slowest runtime.',     tag:'hot',   string:true, number:true, rename:true, deadCode:0.75, antiTamper:true,  numExpr:true,  chunkStrings:true,  stringArray:true  },
-};
+  weak:        { label:'Weak',        desc:'Fast, minimal. Good for debugging.',        tag:'fast',  string:true, number:true, rename:true, deadCode:0,    opaquePredicates:0, antiTamper:false, numExpr:false, chunkStrings:false, stringArray:false },
+  normal:      { label:'Normal',      desc:'Balanced default.',                        tag:'',      string:true, number:true, rename:true, deadCode:0.15, opaquePredicates:0.05, antiTamper:false, numExpr:false, chunkStrings:false, stringArray:false },
+  strong:      { label:'Strong',      desc:'More bloat, harder to read.',              tag:'',      string:true, number:true, rename:true, deadCode:0.30, opaquePredicates:0.15, antiTamper:false, numExpr:false, chunkStrings:false, stringArray:false },
+  superStrong: { label:'Super Strong',desc:'Chunked strings + heavier bloat.',         tag:'mid',   string:true, number:true, rename:true, deadCode:0.45, opaquePredicates:0.25, antiTamper:false, numExpr:false, chunkStrings:true,  stringArray:false },
+  ultra:       { label:'Ultra',       desc:'Anti-tamper + all of the above.',          tag:'mid',   string:true, number:true, rename:true, deadCode:0.45, opaquePredicates:0.35, antiTamper:true,  numExpr:false, chunkStrings:true,  stringArray:false },
+  extreme:     { label:'Extreme',     desc:'Numeric expressions + heavy bloat.',       tag:'hot',   string:true, number:true, rename:true, deadCode:0.60, opaquePredicates:0.45, antiTamper:true,  numExpr:true,  chunkStrings:true,  stringArray:false },
+  evil:        { label:'Evil',        desc:'Maximum protection. Slowest runtime.',     tag:'hot',   string:true, number:true, rename:true, deadCode:0.75, opaquePredicates:0.60, antiTamper:true,  numExpr:true,  chunkStrings:true,  stringArray:true  };
 let currentMode = localStorage.getItem('nf-mode') || 'normal';
 if (!MODES[currentMode]) currentMode = 'normal';
 
