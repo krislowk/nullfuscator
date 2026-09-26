@@ -246,7 +246,7 @@ function encodeString(str,dName){
     chk=(chk+byte)%65536;
     hash=(hash*131+byte)%65536;
     byte=byte^key;
-    escaped+='\\\\'+byte.toString().padStart(3,'0');
+    escaped+='\\'+byte.toString().padStart(3,'0');
   }
   return dName+'("'+escaped+'",'+key+','+chk+','+hash+')';
 }
@@ -322,11 +322,11 @@ function buildAntiTamper(tamperFlagName){
   L.push('    local _s=tostring');
   L.push('    local _v=_s(12345)');
   L.push('    if type(_v)~="string" then '+tamperFlagName+'=false end');
-  L.push('  end');
+  L.push('  end)');
   L.push('  pcall(function()');
   L.push('    local _ok,_v=pcall(function() return 7*11 end)');
   L.push('    if not _ok or _v~=77 then '+tamperFlagName+'=false end');
-  L.push('  end');
+  L.push('  end)');
   L.push('end)');
   L.push('if not '+tamperFlagName+' then return end');
   L.push('');
@@ -398,6 +398,513 @@ function injectDeadCode(tokens,rng,prob,opaqueProb){
 const BANNER="--[[\n█▄░█ █░█ █░░ █░░ █▀ █░█\n█░▀█ █░█ █░░ █░░ █▀ █░█\n▀░░▀ ▀▀▀ ▀▀▀ ▀▀▀ ▀░ ▀▀▀\n▀▀ ▄▀ ▄▀▄ ▀█▀ ▄▀▄ █▀▀▄\n▀▄ █░ █▀█ ░█░ █░█ █▐█▀\n▀░ ░▀ ▀░▀ ░▀░ ░▀░ ▀░▀▀\n█░█ ▄█░\n█░█ ░█░\n░▀░ ▄█▄\n     ══════════════════════════════════════════════\n       Deobfuscating or Dumping is Strictly\n                 Prohibited.\n              With love, Kris\n     ══════════════════════════════════════════════\n]]\n\n";
 
 /* ---- NullFuscator V2 VM foundation ---- */
+function runVMBytecode(vm,env){
+  const stack=[];
+  const globals=env||{};
+  const callStack=[];
+  const frames=[];
+  let pc=0;
+
+  while(pc<vm.code.length){
+    const ins=vm.code[pc++];
+
+    switch(ins.op){
+      case 'PUSHK':
+        stack.push(vm.constants[ins.arg]);
+        break;
+
+      case 'LOAD':
+        stack.push(globals[vm.constants[ins.arg]]);
+        break;
+
+      case 'STORE':
+        globals[vm.constants[ins.arg]]=stack.pop();
+        break;
+
+      case 'JMP':
+        pc=ins.arg;
+        break;
+
+      case 'JZ':
+        if(!stack.pop())pc=ins.arg;
+        break;
+
+      case 'JNZ':
+        if(stack.pop())pc=ins.arg;
+        break;
+
+      case 'CALL': {
+        const target=typeof ins.arg==='object'?ins.arg.target:ins.arg;
+        const argc=typeof ins.arg==='object'?(ins.arg.args||0):0;
+        const args=argc>0?stack.splice(stack.length-argc,argc):[];
+        callStack.push(pc);
+        frames.push({args});
+        pc=target;
+        break;
+      }
+
+      case 'ARG': {
+        const frame=frames[frames.length-1];
+        stack.push(frame&&frame.args?frame.args[ins.arg]:undefined);
+        break;
+      }
+
+      case 'MAKEFUNC':
+        stack.push({__vmFunction:true,target:ins.arg});
+        break;
+
+      case 'NEWTABLE':
+        stack.push({});
+        break;
+
+      case 'TABLESET':
+        {
+          const value=stack.pop();
+          const index=ins.arg;
+          const obj=stack[stack.length-1];
+          if(obj==null)throw new Error('VM TABLESET on nil');
+          obj[index]=value;
+        }
+        break;
+
+      case 'FOR_INIT': {
+        const step=ins.step===undefined?1:ins.step;
+        const limit=stack.pop();
+        const start=stack.pop();
+        stack.push({current:start,limit,step});
+        break;
+      }
+
+      case 'FOR_CHECK': {
+        const loop=stack[stack.length-1];
+        if(!loop)throw new Error('VM FOR_CHECK without loop state');
+        const ok=loop.step>=0?loop.current<=loop.limit:loop.current>=loop.limit;
+        stack.push(ok);
+        break;
+      }
+
+      case 'FOR_STEP': {
+        const loop=stack[stack.length-1];
+        if(!loop)throw new Error('VM FOR_STEP without loop state');
+        loop.current+=loop.step;
+        break;
+      }
+
+      case 'FOR_VALUE': {
+        const loop=stack[stack.length-1];
+        if(!loop)throw new Error('VM FOR_VALUE without loop state');
+        stack.push(loop.current);
+        break;
+      }
+
+      case 'FOR_POP':
+        stack.pop();
+        break;
+
+      case 'BREAK':
+        pc=ins.arg;
+        break;
+
+      case 'GETTABLE': {
+        const key=stack.pop();
+        const obj=stack.pop();
+        stack.push(obj==null?undefined:obj[key]);
+        break;
+      }
+
+      case 'SETTABLE': {
+        const value=stack.pop();
+        const key=stack.pop();
+        const obj=stack.pop();
+        if(obj==null)throw new Error('VM SETTABLE on nil');
+        obj[key]=value;
+        stack.push(obj);
+        break;
+      }
+
+      case 'CALLFUNC': {
+        const argc=ins.arg||0;
+        const args=argc>0?stack.splice(stack.length-argc,argc):[];
+        const fn=stack.pop();
+
+        if(!fn||fn.__vmFunction!==true){
+          throw new Error('VM invalid function value');
+        }
+
+        callStack.push(pc);
+        frames.push({args});
+        pc=fn.target;
+        break;
+      }
+
+      case 'CALLVALUE': {
+        const argc=ins.arg||0;
+        const args=argc>0?stack.splice(stack.length-argc,argc):[];
+        const fn=stack.pop();
+
+        if(typeof fn!=='function'){
+          throw new Error('VM invalid value call');
+        }
+
+        const result=fn.apply(null,args);
+
+        if(Array.isArray(result)){
+          for(let i=0;i<result.length;i++)stack.push(result[i]);
+        }else{
+          stack.push(result);
+        }
+        break;
+      }
+
+      case 'CALLHOST': {
+        const argc=ins.arg||0;
+        const args=argc>0?stack.splice(stack.length-argc,argc):[];
+        const fn=stack.pop();
+        if(typeof fn!=='function'){
+          throw new Error('VM invalid host call');
+        }
+        const result=fn.apply(null,args);
+        if(Array.isArray(result)){
+          for(let i=0;i<result.length;i++)stack.push(result[i]);
+        }else{
+          stack.push(result);
+        }
+        break;
+      }
+
+      case 'RETURN': {
+        const argc=ins.arg==null?1:ins.arg;
+        const values=argc>0?stack.splice(stack.length-argc,argc):[];
+
+        if(!callStack.length){
+          if(argc<=1)return values.length?values[0]:undefined;
+          return {__vmMultiReturn:true,values};
+        }
+
+        pc=callStack.pop();
+        frames.pop();
+
+        if(argc<=1){
+          if(values.length)stack.push(values[0]);
+        }else{
+          stack.push({__vmMultiReturn:true,values});
+        }
+
+        break;
+      }
+
+      case 'TOKEN':
+        stack.push(vm.constants[ins.arg]);
+        break;
+
+      case 'UNARY': {
+        const op=vm.constants[ins.arg];
+        const a=stack.pop();
+
+        if(op==='not'){
+          stack.push(!a);
+        }else if(op==='-'){
+          stack.push(-a);
+        }else{
+          throw new Error('VM unknown unary operator: '+String(op));
+        }
+        break;
+      }
+
+      case 'LOGIC': {
+        const op=vm.constants[ins.arg];
+        const b=stack.pop();
+        const a=stack.pop();
+
+        if(op==='and'){
+          stack.push(a && b);
+        }else if(op==='or'){
+          stack.push(a || b);
+        }else{
+          throw new Error('VM unknown logic operator: '+String(op));
+        }
+        break;
+      }
+
+      case 'BIN': {
+        const b=stack.pop();
+        const a=stack.pop();
+        const op=vm.constants[ins.arg];
+        let r;
+        if(op==='+')r=a+b;
+        else if(op==='-')r=a-b;
+        else if(op==='*')r=a*b;
+        else if(op==='/')r=a/b;
+        else if(op==='%')r=a%b;
+        else if(op==='^')r=a**b;
+        else if(op==='..')r=String(a)+String(b);
+        else if(op==='==')r=a===b;
+        else if(op==='~=')r=a!==b;
+        else if(op==='<')r=a<b;
+        else if(op==='>')r=a>b;
+        else if(op==='<=')r=a<=b;
+        else if(op==='>=')r=a>=b;
+        else throw new Error('VM invalid binary operator');
+        stack.push(r);
+        break;
+      }
+
+      case 'POP':
+        stack.pop();
+        break;
+
+      case 'HALT':
+        return stack.length?stack[stack.length-1]:undefined;
+
+      default:
+        throw new Error('VM unknown opcode: '+String(ins.op));
+    }
+  }
+
+  return stack.length?stack[stack.length-1]:undefined;
+}
+
+function luaVMQuote(value){
+  if(value===null)return 'nil';
+  if(value===true)return 'true';
+  if(value===false)return 'false';
+
+  if(typeof value==='number'){
+    if(!Number.isFinite(value))return '0';
+    return String(value);
+  }
+
+  if(typeof value==='string'){
+    let out='"';
+
+    for(let i=0;i<value.length;i++){
+      const c=value.charCodeAt(i);
+
+      if(c===92){
+        out+='\\\\';
+      }else if(c===34){
+        out+='\\"';
+      }else if(c===13){
+        out+='\\r';
+      }else if(c===10){
+        out+='\\n';
+      }else if(c===9){
+        out+='\\t';
+      }else if(c===0){
+        out+='\\0';
+      }else if(c<32||c>126){
+        out+='\\'+String(c).padStart(3,'0');
+      }else{
+        out+=value[i];
+      }
+    }
+
+    return out+'"';
+  }
+
+  if(typeof value==='undefined')return 'nil';
+  return 'nil';
+}
+
+function serializeVMForLua(vm){
+  const constants=(vm.constants||[]).map(luaVMQuote).join(',');
+  const code=(vm.code||[]).map(function(ins){
+    const op=luaVMQuote(ins.op);
+    const arg=ins.arg===undefined?'nil':luaVMQuote(ins.arg);
+    return '{op='+op+',arg='+arg+'}';
+  }).join(',');
+
+  return '{version='+(Number(vm.version)||1)+
+         ',constants={'+constants+'},code={'+code+'}}';
+}
+
+function buildLuaVMRuntime(vm){
+  const payload=serializeVMForLua(vm);
+
+  return `
+local __VM=${payload}
+
+local function __vm_run(__env)
+  local __code=__VM.code
+  local __const=__VM.constants
+  local __stack={}
+  local __locals=__env or {}                            local __args={}
+  local __pc=1
+
+  local function __push(v)
+    __stack[#__stack+1]=v
+  end
+
+  local function __pop()
+    local n=#__stack
+    local v=__stack[n]
+    __stack[n]=nil
+    return v
+  end
+
+  local function __truthy(v)
+    return v~=nil and v~=false
+  end
+
+  while true do
+    local __ins=__code[__pc]
+    if not __ins then
+      return
+    end
+
+    local __op=__ins.op
+    local __arg=__ins.arg
+
+    if __op=="PUSHK" then
+      __push(__const[__arg+1])
+
+    elseif __op=="LOAD" then
+      local __name=__const[__arg+1]
+      local __value=__locals[__name]
+      if __value==nil and __env~=nil then
+        __value=__env[__name]
+      end
+      if __value==nil then
+        __value=_G[__name]
+      end
+      __push(__value)
+
+    elseif __op=="STORE" then
+      local __name=__const[__arg+1]
+      __locals[__name]=__pop()
+
+    elseif __op=="JMP" then
+      __pc=__arg
+
+    elseif __op=="JZ" then
+      local __v=__pop()
+      if not __truthy(__v) then
+        __pc=__arg
+      end
+
+    elseif __op=="JNZ" then
+      local __v=__pop()
+      if __truthy(__v) then
+        __pc=__arg
+      end
+
+    elseif __op=="CALLVALUE" then
+      local __argc=__arg or 0
+      local __callArgs={}
+      for __i=__argc,1,-1 do
+        __callArgs[__i]=__pop()
+      end
+      local __fn=__pop()
+      if type(__fn)~="function" then
+        error("NullFuscator VM: invalid value call")
+      end
+      local __ok,__result=pcall(function()
+        return __fn(table.unpack(__callArgs))
+      end)
+      if not __ok then
+        error(__result)
+      end
+      __push(__result)
+
+    elseif __op=="CALL" then
+      local __argc=__arg or 0
+      local __callArgs={}
+      for __i=__argc,1,-1 do
+        __callArgs[__i]=__pop()
+      end
+      local __fn=__pop()
+      if type(__fn)~="function" then
+        error("NullFuscator VM: attempted to call non-function")
+      end
+      __args[#__args+1]=__callArgs
+      local __ok,__result=pcall(function()
+        return __fn(table.unpack(__callArgs))
+      end)
+      __args[#__args]=nil
+      if not __ok then
+        error(__result)
+      end
+      __push(__result)
+
+    elseif __op=="ARG" then
+      local __frame=__args[#__args]
+      __push(__frame and __frame[__arg] or nil)
+
+    elseif __op=="UNARY" then
+      local __operator=__const[__arg+1]
+      local __v=__pop()
+      if __operator=="not" then
+        __push(not __truthy(__v))
+      elseif __operator=="-" then
+        __push(-__v)
+      else
+        error("NullFuscator VM: unsupported unary operator")
+      end
+
+    elseif __op=="LOGIC" then
+      local __operator=__const[__arg+1]
+      local __b=__pop()
+      local __a=__pop()
+      if __operator=="and" then
+        if __truthy(__a) then __push(__b) else __push(__a) end
+      elseif __operator=="or" then
+        if __truthy(__a) then __push(__a) else __push(__b) end
+      else
+        error("NullFuscator VM: unsupported logic operator")
+      end
+
+    elseif __op=="BIN" then
+      local __operator=__const[__arg+1]
+      local __b=__pop()
+      local __a=__pop()
+
+      if __operator=="+" then __push(__a+__b)
+      elseif __operator=="-" then __push(__a-__b)
+      elseif __operator=="*" then __push(__a*__b)
+      elseif __operator=="/" then __push(__a/__b)
+      elseif __operator=="%" then __push(__a%__b)
+      elseif __operator=="^" then __push(__a^__b)
+      elseif __operator==".." then __push(__a..__b)
+      elseif __operator=="==" then __push(__a==__b)
+      elseif __operator=="~=" then __push(__a~=__b)
+      elseif __operator=="<" then __push(__a<__b)
+      elseif __operator==">" then __push(__a>__b)
+      elseif __operator=="<=" then __push(__a<=__b)
+      elseif __operator==">=" then __push(__a>=__b)
+      else
+        error("NullFuscator VM: unsupported binary operator")
+      end
+
+    elseif __op=="GETTABLE" then
+      local __key=__pop()
+      local __obj=__pop()
+      if __obj==nil then
+        __push(nil)
+      else
+        __push(__obj[__key])
+      end
+
+    elseif __op=="POP" then
+      __pop()
+
+    elseif __op=="RETURN" then
+      return __pop()
+
+    elseif __op=="HALT" then
+      return
+
+    else
+      error("NullFuscator VM: unsupported opcode "..tostring(__op))
+    end
+
+    __pc=__pc+1
+  end
+end
+
+return __vm_run()
+`;
+}
+
 function buildVMBytecode(tokens){
   const code=[];
   const constants=[];
@@ -424,6 +931,50 @@ function buildVMBytecode(tokens){
     if(i>=tokens.length)break;
 
     const t=tokens[i];
+    if(t.type==='op'&&t.value===';'){
+      i++;
+      continue;
+    }
+
+
+    if(t.type==='keyword'&&t.value==='return'){
+      const start=significant(i+1);
+
+      if(start>=tokens.length){
+        code.push({op:'RETURN',arg:0});
+        i=start;
+        continue;
+      }
+
+      let end=start;
+      let depth=0;
+
+      while(end<tokens.length){
+        const x=tokens[end];
+
+        if(x.type==='op'){
+          if(x.value==='('||x.value==='['||x.value==='{')depth++;
+          else if(x.value===')'||x.value===']'||x.value==='}')depth--;
+        }
+
+        if(depth===0&&x.type==='keyword'&&
+          (x.value==='local'||x.value==='if'||x.value==='then'||
+           x.value==='end'||x.value==='return')){
+          break;
+        }
+
+        if(depth===0&&x.type==='ws'&&x.value.includes('\n'))break;
+
+        if(depth===0&&x.type==='op'&&x.value===';')break;
+
+        end++;
+      }
+
+      code.push(...compileVMExpression(tokens,start,end,constant));
+      code.push({op:'RETURN',arg:1});
+      i=end;
+      continue;
+    }
 
     if(t.type==='keyword'&&t.value==='local'){
       let j=significant(i+1);
@@ -451,12 +1002,7 @@ function buildVMBytecode(tokens){
               break;
             }
 
-            if(depth===0&&x.type==='name'){
-              let q=significant(end+1);
-              if(q<tokens.length&&tokens[q].type==='op'&&(tokens[q].value==='='||tokens[q].value==='(')){
-                break;
-              }
-            }
+            if(depth===0&&x.type==='ws'&&x.value.includes('\n'))break;
 
             if(depth===0&&x.type==='op'&&x.value===';')break;
             end++;
@@ -629,8 +1175,8 @@ function compileVMExpression(tokens,start,end,constant){
   const emitOp=op=>{
     if(op==='and'||op==='or'){
       output.push({op:'LOGIC',arg:constant(op)});
-    }else if(op==='not'||op==='-'){
-      output.push({op:'UNARY',arg:constant(op)});
+    }else if(op==='u-'||op==='unot'){
+      output.push({op:'UNARY',arg:constant(op==='u-'?'-':'not')});
     }else{
       output.push({op:'BIN',arg:constant(op)});
     }
@@ -1223,12 +1769,18 @@ function compileVMExpression(tokens,start,end,constant){
 
     if((t.type==='op'||t.type==='keyword')&&
        (op==='-'||op==='not')&&
-       (i===start||(
-         tokens[i-1] &&
-         tokens[i-1].type==='op' &&
-         tokens[i-1].value!==' )'
-       ))){
-      ops.push(op);
+       (()=>{
+         let p=i-1;
+         while(p>=start&&(tokens[p].type==='ws'||tokens[p].type==='comment'))p--;
+         if(p<start)return true;
+         const prev=tokens[p];
+         if(prev.type==='op'){
+           return ['(','[','{',',','=','+','-','*','/','%','^','..','==','~=','<','>','<=','>='].includes(prev.value);
+         }
+         return false;
+       })()
+     ){
+      ops.push(op==='-'?'u-':'unot');
       i++;
       continue;
     }
@@ -2470,26 +3022,7 @@ function encodeVMBytecode(vm){
   return out;
 }
 
-function luaVMQuote(value){
-  if(value===null)return 'nil';
-  if(value===true)return 'true';
-  if(value===false)return 'false';
-  if(typeof value==='number'){
-    if(!Number.isFinite(value))return '0';
-    return String(value);
-  }
-  if(typeof value==='string'){
-    return '"' + value
-      .replace(/\\/g,'\\\\')
-      .replace(/"/g,'\\"')
-      .replace(/\r/g,'\\r')
-      .replace(/\n/g,'\\n')
-      .replace(/\t/g,'\\t')
-      .replace(/\0/g,'\\0') + '"';
-  }
-  if(typeof value==='undefined')return 'nil';
-  return 'nil';
-}
+
 
 function serializeVMForLua(vm){
   const constants=(vm.constants||[]).map(luaVMQuote).join(',');
@@ -2547,6 +3080,9 @@ local function __vm_run(__env)
     elseif __op=="LOAD" then
       local __name=__const[__arg+1]
       local __value=__locals[__name]
+      if __value==nil and __env~=nil then
+        __value=__env[__name]
+      end
       if __value==nil then
         __value=_G[__name]
       end
@@ -2694,7 +3230,37 @@ function obfuscateLua(src,opts){
   let _s=seed;
   const rng=function(){_s=(_s*1103515245+12345)&0x7fffffff;return _s/0x7fffffff;};
 
-  const tokens=tokenize(src).filter(t=>t.type!=='ws'&&t.type!=='comment');
+  const sourceTokens=tokenize(src);
+  let __stmt=0,__paren=0,__bracket=0,__brace=0;
+  const tokens=[];
+
+  for(let ti=0;ti<sourceTokens.length;ti++){
+    const st=sourceTokens[ti];
+
+    if(st.type==='ws'){
+      if(/\n/.test(st.value)&&__paren===0&&__bracket===0&&__brace===0){
+        const next=sourceTokens[ti+1];
+        if(next&&next.type!=='comment')__stmt++;
+      }
+      continue;
+    }
+
+    if(st.type==='comment')continue;
+
+    st._stmt=__stmt;
+
+    if(st.type==='op'){
+      if(st.value==='(')__paren++;
+      else if(st.value===')')__paren=Math.max(0,__paren-1);
+      else if(st.value==='[')__bracket++;
+      else if(st.value===']')__bracket=Math.max(0,__bracket-1);
+      else if(st.value==='{')__brace++;
+      else if(st.value==='}')__brace=Math.max(0,__brace-1);
+    }
+
+    tokens.push(st);
+  }
+
   const locals=collectLocals(tokens);
   const usedNames=new Set();
   for(const t of tokens)if(t.type==='name')usedNames.add(t.value);
@@ -2730,14 +3296,14 @@ function obfuscateLua(src,opts){
       const decoded=parseLuaString(t.value);
       if(opts.stringArray){
         stringTable.push(opts.chunkStrings?encodeStringChunked(decoded,dName):encodeString(decoded,dName));
-        out.push({type:'raw',value:strGetName+'('+stringTable.length+')'});
+        out.push({type:'raw',value:strGetName+'('+stringTable.length+')',_stmt:t._stmt});
       }else{
-        out.push({type:'raw',value:opts.chunkStrings?encodeStringChunked(decoded,dName):encodeString(decoded,dName)});
+        out.push({type:'raw',value:opts.chunkStrings?encodeStringChunked(decoded,dName):encodeString(decoded,dName),_stmt:t._stmt});
       }
       continue;
     }
     if(t.type==='number'){
-      out.push({type:'raw',value:encodeNumber(t.value,!!opts.numExpr),numeric:true});
+      out.push({type:'raw',value:encodeNumber(t.value,!!opts.numExpr),numeric:true,_stmt:t._stmt});
       continue;
     }
     if(t.type==='name'){
@@ -2759,7 +3325,7 @@ function obfuscateLua(src,opts){
         out.push(t);
         continue;
       }
-      if(renameMap.has(t.value))out.push({type:'raw',value:renameMap.get(t.value)});
+      if(renameMap.has(t.value))out.push({type:'raw',value:renameMap.get(t.value),_stmt:t._stmt});
       else out.push(t);
       continue;
     }
@@ -2794,12 +3360,56 @@ function obfuscateLua(src,opts){
     }
   }
 
-  const body=generate(finalTokens);
+  const body=generateVM(finalTokens);
   const antiTamper=opts.antiTamper?buildAntiTamper(tamperFlag):'';
   const header=buildHeader(bxName,dName);
   const watermark='--[[ NullFuscator-WM:'+Math.random().toString(36).slice(2,10)+' ]]\n';
-  return BANNER+watermark+header+pre+antiTamper+body;
+
+  const vmTokens=tokenize(body).filter(t=>t.type!=='comment'&&t.type!=='ws');
+
+const vmBytecode=buildVMBytecode(vmTokens);
+  const vmRuntime=buildLuaVMRuntime(vmBytecode);
+
+  const vmEnvName=freshName();
+  const vmEnvParts=[
+    bxName+'='+bxName,
+    dName+'='+dName
+  ];
+  if(opts.stringArray){
+    vmEnvParts.push(strGetName+'='+strGetName);
+  }
+  if(opts.antiTamper){
+    vmEnvParts.push(tamperFlag+'='+tamperFlag);
+  }
+
+  const vmEnv='local '+vmEnvName+'={'+vmEnvParts.join(',')+'}\n';
+  const vmEntry=vmRuntime.replace(
+    'return __vm_run()',
+    'return __vm_run('+vmEnvName+')'
+  );
+
+  return BANNER+watermark+header+pre+antiTamper+vmEnv+vmEntry;
 }
+
+function generateVM(tokens){
+  let out='',prev=null,prevStmt=null;
+  for(const t of tokens){
+    const stmt=t._stmt;
+
+    if(prev&&stmt!==undefined&&prevStmt!==undefined&&stmt!==prevStmt){
+      out+=';';
+    }else if(prev&&needsSpace(prev,t)){
+      out+=' ';
+    }
+
+    out+=t.value;
+    prev=t;
+    if(stmt!==undefined)prevStmt=stmt;
+  }
+
+  return out;
+}
+
 function generate(tokens){
   let out='',prev=null;
   for(const t of tokens){
@@ -2850,7 +3460,8 @@ const MODES = {
   superStrong: { label:'Super Strong',desc:'Chunked strings + heavier bloat.',         tag:'mid',   string:true, number:true, rename:true, deadCode:0.45, opaquePredicates:0.25, antiTamper:false, numExpr:false, chunkStrings:true,  stringArray:false },
   ultra:       { label:'Ultra',       desc:'Anti-tamper + all of the above.',          tag:'mid',   string:true, number:true, rename:true, deadCode:0.45, opaquePredicates:0.35, antiTamper:true,  numExpr:false, chunkStrings:true,  stringArray:false },
   extreme:     { label:'Extreme',     desc:'Numeric expressions + heavy bloat.',       tag:'hot',   string:true, number:true, rename:true, deadCode:0.60, opaquePredicates:0.45, antiTamper:true,  numExpr:true,  chunkStrings:true,  stringArray:false },
-  evil:        { label:'Evil',        desc:'Maximum protection. Slowest runtime.',     tag:'hot',   string:true, number:true, rename:true, deadCode:0.75, opaquePredicates:0.60, antiTamper:true,  numExpr:true,  chunkStrings:true,  stringArray:true  };
+  evil:        { label:'Evil',        desc:'Maximum protection. Slowest runtime.',     tag:'hot',   string:true, number:true, rename:true, deadCode:0.75, opaquePredicates:0.60, antiTamper:true,  numExpr:true,  chunkStrings:true,  stringArray:true  }
+};
 let currentMode = localStorage.getItem('nf-mode') || 'normal';
 if (!MODES[currentMode]) currentMode = 'normal';
 
