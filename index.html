@@ -395,7 +395,7 @@ function injectDeadCode(tokens,rng,prob,opaqueProb){
   return result;
 }
 
-const BANNER="--[[\n█▄░█ █░█ █░░ █░░ █▀ █░█\n█░▀█ █░█ █░░ █░░ █▀ █░█\n▀░░▀ ▀▀▀ ▀▀▀ ▀▀▀ ▀░ ▀▀▀\n▀▀ ▄▀ ▄▀▄ ▀█▀ ▄▀▄ █▀▀▄\n▀▄ █░ █▀█ ░█░ █░█ █▐█▀\n▀░ ░▀ ▀░▀ ░▀░ ░▀░ ▀░▀▀\n█░█ ▄█░\n█░█ ░█░\n░▀░ ▄█▄\n     ══════════════════════════════════════════════\n       Deobfuscating or Dumping is Strictly\n                 Prohibited.\n              With love, Kris\n     ══════════════════════════════════════════════\n]]\n\n";
+const BANNER="--[[\nThis was made On NullFuscator V2.\nDumping OR Deobfuscating is Strictly Prohibited.\nPlease stand by.\nWith Love, Kris.\n]]\n\n";
 
 /* ---- NullFuscator V2 VM foundation ---- */
 function runVMBytecode(vm,env){
@@ -1125,7 +1125,7 @@ function buildVMBytecode(tokens){
   }
 
   code.push({op:'HALT'});
-  return {version:1,constants,code};
+  return {version:1,constants,code:assembleVM(code)};
 }
 
 
